@@ -167,9 +167,10 @@ int module_start(SceSize args, void *argp) {
 	
 	ret = taiGetModuleInfo("ScePspemu", &tai_info);
 	if (ret < 0){
-		LOG("%s: module not found\n", __func__);
 		return SCE_KERNEL_START_NO_RESIDENT;
 	}
+
+	LOG_INIT();
 
 	#if DUMP
 	dump_pspemu(tai_info.modid);
