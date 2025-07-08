@@ -1,0 +1,7 @@
+set -xe
+
+rm -rf user_build
+mkdir -p user_build
+cd user_build
+cmake ../user
+make

@@ -1,0 +1,195 @@
+#include <vitasdk.h>
+
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <psp2/kernel/modulemgr.h>
+#include <psp2common/kernel/iofilemgr.h>
+
+#include <taihen.h>
+
+#include "log.h"
+
+#define DUMP 1
+
+static tai_hook_ref_t sceKernelCreateThreadRef = {0};
+static tai_hook_ref_t kermit_wait_and_get_request_ref = {0};
+
+SceUID sceKernelCreateThreadHookId = -1;
+SceUID kermit_wait_and_get_request_hook_id = -1;
+
+// based on https://github.com/TheOfficialFlow/Adrenaline/blob/master/adrenaline_compat.h
+// https://github.com/TheOfficialFloW/Adrenaline/blob/master/user/main.c
+typedef struct {
+	uint32_t cmd; //0x0
+	SceUID sema_id; //0x4
+	uint64_t *response; //0x8
+	uint32_t padding; //0xC
+	uint64_t args[14]; // 0x10
+} SceKermitRequest; //0x80
+
+static int (*kermit_wait_and_get_request)(int type, SceKermitRequest **) = NULL;
+static int (*kermit_respond_request)(int type, SceKermitRequest *, uint64_t response) = NULL;
+static void (*kermit_throw_error)(uint32_t error) = NULL;
+static SceKernelLwMutexWork *net_mutex_10DE050 = NULL;
+static SceKernelLwMutexWork *net_mutex_ADC948 = NULL;
+static int (*net_state_10DE07C) = NULL;
+static void (*net_func_13FF4)(uint32_t unk) = NULL;
+static uint32_t (*kermit_func_6F7C)(int type, uint32_t unk1, uint32_t unk2, uint32_t unk3) = NULL;
+static uint32_t *kermit_state_1015C = NULL;
+
+int kermit_wait_and_get_request_new(int type, SceKermitRequest **request){
+	uint32_t unknown_1;
+	if (type == 5){
+		unknown_1 = 1;
+	}else if (type == 6){
+		unknown_1 = 2;
+	}else{
+		unknown_1 = 0;
+	}
+
+	//LOG("%s: kermit_state_1015C 0x%x, kermit_func_6F7C 0x%x\n", __func__, *kermit_state_1015C, kermit_func_6F7C);
+
+	//LOG("%s: doing swi with type 0x%x\n", __func__, type);
+
+	uint32_t unknown_2 = kermit_func_6F7C(type, unknown_1, 0, 0);
+
+	//LOG("%s: swi done with result 0x%x\n", __func__, unknown_2);
+
+	if ((int32_t)unknown_2 < 0){
+		LOG("%s: throwing kermit_func_6F7C error 0x%x\n", __func__, unknown_2);
+		kermit_throw_error(unknown_2);
+		*request = 0;
+		return 0;
+	}
+
+	uint32_t unknown_3 = unknown_2 * 2 & 0x1fffffff;
+	if (unknown_3 + 0xf8000000 < 0x4000000){
+		if (((int)(unknown_2 * 2) < 1) || (unknown_3 + 0xf7c00000 < 0x7000000)) {
+			*request = (SceKermitRequest *)(unknown_3 + *kermit_state_1015C - 0x8000000);
+			return request[0]->cmd;
+		}
+	}else{
+		if (unknown_3 + 0xfc000000 < 0x800000){
+			*request = (SceKermitRequest *)(unknown_3 + *kermit_state_1015C - 0x200000);
+			return request[0]->cmd;
+		}
+		if (unknown_3 - 0x10000 < 0x4000) {
+			*request = (SceKermitRequest *)(unknown_3 + *kermit_state_1015C + 0x3cf0000);
+			return request[0]->cmd;
+		}
+	}
+	LOG("%s: wait failed, trigger null pointer deref like the original\n", __func__);
+	*request = 0;
+	return request[0]->cmd;
+}
+
+int kermit_wait_and_get_request_patched(int type, SceKermitRequest **request){
+	// Register/branch inconsistency on this hook, we can't use the trampoline from taihen here
+	//int cmd = TAI_CONTINUE(int, kermit_wait_and_get_request_ref);
+	int cmd = kermit_wait_and_get_request_new(type, request);
+
+	if (type == 10){
+		LOG("%s: net cmd 0x%x\n", __func__, cmd);
+	}
+
+	return cmd;
+}
+
+static SceUID sceKernelCreateThreadPatched(const char *name, SceKernelThreadEntry entry, int initPriority,
+                      int stackSize, SceUInt attr, int cpuAffinityMask,
+                      const SceKernelThreadOptParam *option) {
+	LOG("%s: starting thread %s with entry 0x%x\n", __func__, name, entry);
+
+	int result = TAI_CONTINUE(SceUID, sceKernelCreateThreadRef, name, entry, initPriority, stackSize, attr, cpuAffinityMask, option);
+	return result;
+}
+
+static void dump_pspemu(SceUID modid){
+	SceKernelModuleInfo modinfo;
+	modinfo.size = sizeof(modinfo);
+	int get_module_status = sceKernelGetModuleInfo(modid, &modinfo);
+	if (get_module_status != 0){
+		LOG("%s: failed getting module info, 0x%x\n", __func__, get_module_status);
+		return;
+	}
+
+	for (int i = 0;i < 4;i++){
+		LOG("%s: seg num %d size %d vaddr 0x%x memsz %d\n", __func__, i, modinfo.segments[i].size, modinfo.segments[i].vaddr, modinfo.segments[i].memsz);
+		if (modinfo.segments[i].size != 0){
+			char path[256];
+			sprintf(path, "ux0:/pspemu_seg_%d.dump", i);
+			int fd = sceIoOpen(path, SCE_O_WRONLY | SCE_O_TRUNC | SCE_O_CREAT, 0777);
+			if (fd < 0){
+				LOG("%s: failed opening %s for writing, 0x%x\n", __func__, path, fd);
+				continue;
+			}
+			int write_status = sceIoWrite(fd, modinfo.segments[i].vaddr, modinfo.segments[i].memsz);
+			sceIoClose(fd);
+		}
+	}
+}
+
+// offsets are from 3.65
+static int get_functions_and_data(SceUID modid){
+	SceKernelModuleInfo modinfo;
+	modinfo.size = sizeof(modinfo);
+	int get_module_status = sceKernelGetModuleInfo(modid, &modinfo);
+	if (get_module_status != 0){
+		LOG("%s: failed getting module info, 0x%x\n", __func__, get_module_status);
+		return -1;
+	}
+
+	uint32_t text_addr = modinfo.segments[0].vaddr;
+	uint32_t data_addr = modinfo.segments[1].vaddr;
+
+	kermit_wait_and_get_request = (void *)(text_addr + 0x64D0 + 0x1);
+	kermit_respond_request = (void *)(text_addr + 0x6560 + 0x1);
+	kermit_throw_error = (void *)(text_addr + 0x4104 + 0X1);
+	net_mutex_10DE050 = (void *)(data_addr + 0x10DE050);
+	net_mutex_ADC948 = (void *)(data_addr + 0xADC948);
+	net_state_10DE07C = (void *)(data_addr + 0x10DE07C);
+	net_func_13FF4 = (void *)(text_addr + 0x13FF4 + 0x1);
+	kermit_func_6F7C = (void *)(text_addr + 0x6F7C);
+	kermit_state_1015C = (void *)(data_addr + 0x1015c);
+
+	return 0;
+}
+
+void _start() __attribute__ ((weak, alias ("module_start"))); 
+int module_start(SceSize args, void *argp) {
+	int ret = 0;
+
+	tai_module_info_t tai_info;
+	tai_info.size = sizeof(tai_module_info_t);
+	
+	ret = taiGetModuleInfo("ScePspemu", &tai_info);
+	if (ret < 0){
+		LOG("%s: module not found\n", __func__);
+		return SCE_KERNEL_START_NO_RESIDENT;
+	}
+
+	#if DUMP
+	dump_pspemu(tai_info.modid);
+	sceKernelCreateThreadHookId = taiHookFunctionImport(&sceKernelCreateThreadRef, "ScePspemu", 0xCAE9ACE6, 0xC5C11EE7, sceKernelCreateThreadPatched);
+	LOG("%s: sceKernelCreateThread hooked 0x%x\n", __func__, sceKernelCreateThreadHookId);
+	#endif
+
+	get_functions_and_data(tai_info.modid);
+	kermit_wait_and_get_request_hook_id = taiHookFunctionOffset(&kermit_wait_and_get_request_ref, tai_info.modid, 0, 0x64D0, 1, kermit_wait_and_get_request_patched);
+	LOG("%s: kermit_wait_and_get_request hooked 0x%x\n", __func__, kermit_wait_and_get_request_hook_id);
+
+	return SCE_KERNEL_START_SUCCESS;
+}
+
+int module_stop(SceSize args, void *argp) {
+	#if DUMP
+	taiHookRelease(sceKernelCreateThreadHookId, sceKernelCreateThreadRef);
+	LOG("%s: sceKernelCreateThread unhooked\n", __func__);
+	#endif
+	taiHookRelease(kermit_wait_and_get_request_hook_id, kermit_wait_and_get_request_ref);
+
+	return SCE_KERNEL_STOP_SUCCESS;
+}
