@@ -11,6 +11,8 @@
 #include <taihen.h>
 
 #include "log.h"
+#include "kermit.h"
+#include "inet.h"
 
 #define DUMP 1
 
@@ -20,18 +22,8 @@ static tai_hook_ref_t kermit_wait_and_get_request_ref = {0};
 SceUID sceKernelCreateThreadHookId = -1;
 SceUID kermit_wait_and_get_request_hook_id = -1;
 
-// based on https://github.com/TheOfficialFlow/Adrenaline/blob/master/adrenaline_compat.h
-// https://github.com/TheOfficialFloW/Adrenaline/blob/master/user/main.c
-typedef struct {
-	uint32_t cmd; //0x0
-	SceUID sema_id; //0x4
-	uint64_t *response; //0x8
-	uint32_t padding; //0xC
-	uint64_t args[14]; // 0x10
-} SceKermitRequest; //0x80
-
 static int (*kermit_wait_and_get_request)(int type, SceKermitRequest **) = NULL;
-static int (*kermit_respond_request)(int type, SceKermitRequest *, uint64_t response) = NULL;
+int (*kermit_respond_request)(int type, SceKermitRequest *, uint64_t response) = NULL;
 static void (*kermit_throw_error)(uint32_t error) = NULL;
 static SceKernelLwMutexWork *net_mutex_10DE050 = NULL;
 static SceKernelLwMutexWork *net_mutex_ADC948 = NULL;
@@ -87,15 +79,23 @@ int kermit_wait_and_get_request_new(int type, SceKermitRequest **request){
 }
 
 int kermit_wait_and_get_request_patched(int type, SceKermitRequest **request){
-	// Register/branch inconsistency on this hook, we can't use the trampoline from taihen here
-	//int cmd = TAI_CONTINUE(int, kermit_wait_and_get_request_ref);
-	int cmd = kermit_wait_and_get_request_new(type, request);
+	while(1){
+		// Register/branch inconsistency on this hook, we can't use the trampoline from taihen here
+		//int cmd = TAI_CONTINUE(int, kermit_wait_and_get_request_ref);
 
-	if (type == 10){
-		LOG("%s: net cmd 0x%x\n", __func__, cmd);
+		int cmd = kermit_wait_and_get_request_new(type, request);
+
+		if (type == 10){
+			int handled = handle_inet_request(*request);
+			if (handled){
+				continue;
+			}
+		}
+
+		return cmd;
 	}
 
-	return cmd;
+	return 0;
 }
 
 static SceUID sceKernelCreateThreadPatched(const char *name, SceKernelThreadEntry entry, int initPriority,
