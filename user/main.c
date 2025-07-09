@@ -182,6 +182,9 @@ int module_start(SceSize args, void *argp) {
 	kermit_wait_and_get_request_hook_id = taiHookFunctionOffset(&kermit_wait_and_get_request_ref, tai_info.modid, 0, 0x64D0, 1, kermit_wait_and_get_request_patched);
 	LOG("%s: kermit_wait_and_get_request hooked 0x%x\n", __func__, kermit_wait_and_get_request_hook_id);
 
+	int workers_started = inet_init();
+	LOG("%s: started %d workers\n", __func__, workers_started);
+
 	return SCE_KERNEL_START_SUCCESS;
 }
 
