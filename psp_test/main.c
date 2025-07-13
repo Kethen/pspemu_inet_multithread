@@ -9,6 +9,7 @@
 #include <psputility_netmodules.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 
 #include <string.h>
 
@@ -105,6 +106,46 @@ void tcp_send(){
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(27015);
 	addr.sin_addr.s_addr = sceNetInetInetAddr("127.0.0.1");
+
+	int sock_opt = 1;
+	LOG("%s: sceNetInetSetsockopt %d %d 0x%x %d\n", __func__, sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, sizeof(sock_opt));
+	int set_sockopt_status = sceNetInetSetsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, (socklen_t)sizeof(sock_opt));
+	if (set_sockopt_status < 0){
+		LOG("%s: failed setting tcp nodelay socket option, 0x%x\n", __func__, set_sockopt_status);
+		return;
+	}
+
+	sock_opt = 1;
+	LOG("%s: sceNetInetSetsockopt %d %d 0x%x %d\n", __func__, sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, sizeof(sock_opt));
+	set_sockopt_status = sceNetInetSetsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, (socklen_t)sizeof(sock_opt));
+	if (set_sockopt_status < 0){
+		LOG("%s: failed setting keepalive socket option, 0x%x\n", __func__, set_sockopt_status);
+		return;
+	}
+
+	socklen_t sockopt_len = sizeof(int);
+	LOG("%s: sceNetInetGetsockopt %d %d 0x%x %d\n", __func__, sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, sizeof(sock_opt));
+	int get_sockopt_status = sceNetInetGetsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, &sockopt_len);
+	if (get_sockopt_status < 0){
+		LOG("%s: failed getting socket option, 0x%x\n", __func__, get_sockopt_status);
+		return;
+	}
+	if (!sock_opt){
+		LOG("%s: tcp nodelay socket option was not set properly, 0x%x\n", __func__, sock_opt);
+		return;
+	}
+
+	sockopt_len = sizeof(int);
+	LOG("%s: sceNetInetGetsockopt %d %d 0x%x %d\n", __func__, sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, sizeof(sock_opt));
+	get_sockopt_status = sceNetInetGetsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, &sockopt_len);
+	if (get_sockopt_status < 0){
+		LOG("%s: failed getting socket option, 0x%x\n", __func__, get_sockopt_status);
+		return;
+	}
+	if (!sock_opt){
+		LOG("%s: keepalive socket option was not set properly, 0x%x\n", __func__, sock_opt);
+		return;
+	}
 
 	LOG("%s: sceNetInetConnect %d, 0x%x, %d\n", __func__, sock, &addr, sizeof(addr));
 	int connect_status = sceNetInetConnect(sock, (struct sockaddr*)&addr, sizeof(addr));
