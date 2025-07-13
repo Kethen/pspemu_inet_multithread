@@ -165,6 +165,18 @@ void tcp_send(){
 	}
 
 	sceKernelDelayThread(1000000 * 2);
+
+	struct sockaddr_in peer_addr = {0};
+	socklen_t peer_addr_len = sizeof(peer_addr);
+	LOG("%s: sceNetInetGetpeername %d 0x%x 0x%x\n", __func__, sock, &peer_addr, &peer_addr_len);
+	sceNetInetGetpeername(sock, (struct sockaddr*)&peer_addr, &peer_addr_len);
+	if (peer_addr.sin_addr.s_addr != sceNetInetInetAddr("127.0.0.1")){
+		LOG("%s: bad peer addr\n");
+	}
+	if (peer_addr.sin_port != htons(27015)){
+		LOG("%s: bad peer port\n");
+	}
+
 	LOG("%s: sceNetInetClose %d\n", __func__, sock);
 	sceNetInetClose(sock);
 }
@@ -200,6 +212,17 @@ void test_tcp(){
 	if (listen_result < 0){
 		LOG("%s: failed setting up listen, 0x%x\n", __func__, listen_result);
 		return;
+	}
+
+	struct sockaddr_in self_addr = {0};
+	socklen_t self_addr_len = sizeof(self_addr);
+	LOG("%s: sceNetInetGetsockname %d 0x%x 0x%x\n", __func__, sock, &self_addr, &self_addr_len);
+	sceNetInetGetsockname(sock, (struct sockaddr*)&self_addr, &self_addr_len);
+	if (self_addr.sin_addr.s_addr != sceNetInetInetAddr("127.0.0.1")){
+		LOG("%s: bad self addr\n");
+	}
+	if (self_addr.sin_port != htons(27015)){
+		LOG("%s: bad self port\n");
 	}
 
 	int tid = sceKernelCreateThread("connect thread", tcp_send_thread, 0x18, 0x10000, 0, NULL);
