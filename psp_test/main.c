@@ -10,6 +10,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <string.h>
+
 #include "log.h"
 
 PSP_MODULE_INFO("WLAN test", 0x1000, 1, 1);
@@ -84,6 +86,45 @@ void term_inet(){
 	sceNetResolverTerm();
 	sceNetInetTerm();
 	sceNetTerm();
+}
+
+const char test_data[] = "abcdefg";
+
+typedef int (*trans_function)(int sock, uint8_t *buf, int size, int flags);
+
+void connect_self(){
+	LOG("%s: creating socket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_STREAM, 0);
+	int sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
+	if (sock < 0){
+		LOG("%s: failed creating socket, 0x%x\n", __func__, sock);
+		return;
+	}
+
+	struct sockaddr_in addr = {0};
+	addr.sin_len = sizeof(addr);
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(27015);
+	addr.sin_addr.s_addr = sceNetInetInetAddr("127.0.0.1");
+
+	LOG("%s: connecting to self, %d, 0x%x, %d\n", __func__, sock, &addr, sizeof(addr));
+	int connect_status = sceNetInetConnect(sock, (struct sockaddr*)&addr, sizeof(addr));
+	if (connect_status < 0){
+		LOG("%s: failed connecting, 0x%x\n", __func__, connect_status);
+		return;
+	}
+
+	LOG("%s: sending data to self, %d 0x%x %d %d\n", __func__, sock, test_data, sizeof(test_data), 0);
+	int send_status = sceNetInetSend(sock, test_data, sizeof(test_data), 0);
+	if (send_status < 0){
+		LOG("%s: failed sending, 0x%x\n", __func__, send_status);
+		return;
+	}
+	LOG("%s: sent %d bytes, expected %d\n", __func__, send_status, sizeof(test_data));
+}
+
+int connect_thread(SceSize args, void *argp){
+	connect_self();
+	return 0;
 }
 
 void test(){
@@ -184,6 +225,50 @@ void test(){
 		LOG("%s: failed binding socket, 0x%x\n", __func__, bind_result);
 		return;
 	}
+
+	LOG("%s: setting socket to listen mode, %d %d\n", __func__, sock, 100);
+	int listen_result = sceNetInetListen(sock, 100);
+	if (listen_result < 0){
+		LOG("%s: failed setting up listen, 0x%x\n", __func__, listen_result);
+		return;
+	}
+
+	int tid = sceKernelCreateThread("connect thread", connect_thread, 0x18, 0x10000, 0, NULL);
+	if(tid < 0){
+		LOG("%s: failed creating connection pair thread, 0x%x\n", __func__, tid);
+		return;
+	}
+	sceKernelStartThread(tid, 0, NULL);
+
+	sceKernelDelayThread(1000000);
+
+	struct sockaddr_in incoming_addr = {0};
+	socklen_t addr_len = sizeof(incoming_addr);
+	LOG("%s: accepting connection, %d 0x%x 0x%x\n", __func__, sock, &incoming_addr, &addr_len);
+	int accept_sock = sceNetInetAccept(sock, (struct sockaddr*)&incoming_addr, &addr_len);
+	if (accept_sock < 0){
+		LOG("%s: failed accepting connection, 0x%x\n", __func__, accept_sock);
+		return;
+	}
+
+	char recv_buf[sizeof(test_data)];
+	LOG("%s: receiving data, %d 0x%x %d %d\n", __func__, accept_sock, recv_buf, sizeof(recv_buf), 0);
+	int recv_state = sceNetInetRecv(accept_sock, recv_buf, sizeof(recv_buf), 0);
+	if (recv_state < 0){
+		LOG("%s: failed receiving data, 0x%x\n", __func__, recv_state);
+		return;
+	}
+
+	if(recv_state != sizeof(test_data)){
+		LOG("%s: not getting the full small transmission somehow\n", __func__);
+		return;
+	}
+	if (memcmp(test_data, recv_buf, sizeof(test_data)) != 0){
+		LOG("%s: bad data received\n", __func__);
+		return;
+	}
+
+	LOG("%s: data received\n", __func__);
 }
 
 int test_thread(SceSize args, void *argp){
@@ -194,8 +279,6 @@ int test_thread(SceSize args, void *argp){
 int main(void) {
 	INIT_LOG();
 	SetupCallbacks();
-
-	sceKernelDelayThread(1000000 * 3);
 
 	int tid = sceKernelCreateThread("test_thread", test_thread, 0x18, 0x10000, 0, NULL);
 	if (tid < 0){
