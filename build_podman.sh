@@ -1,4 +1,4 @@
-IMAGE_NAME="psvsdk"
+IMAGE_NAME="psvsdk_pspemu_inet_multithread"
 
 if [ "$REBUILD_IMAGE" == "true" ] && podman image exists $IMAGE_NAME
 then

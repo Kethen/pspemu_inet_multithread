@@ -5,3 +5,7 @@ mkdir -p user_build
 cd user_build
 cmake ../user
 make
+
+cd ../psp_test
+make clean
+make
