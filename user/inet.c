@@ -20,8 +20,83 @@ int num_workers = 0;
 
 static int last_worker_used = 0;
 
+static void log_request(SceKermitRequest *request){
+	switch(request->cmd){
+		// socket number all have an offset
+		// 0xabd54000? 0x0bd54000 might be a kermit magic address on the psp side, it keeps being used and I don't see real addresses; might end up needing a psp side plugin as well
+		case 0x40:{
+			LOG("%s: socket 0x%x 0x%x 0x%x\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[1], (uint32_t)request->args[2]);
+			return;
+		}
+		case 0x4b:{
+			// rearranged!
+			LOG("%s: bind %d 0x%x %d\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[2], (uint32_t)request->args[1]);
+			return;
+		}
+		case 0x3b:{
+			LOG("%s: listen %d %d\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[1]);
+			return;
+		}
+		case 0x3c:{
+			// sockfd, address, size
+			// size and address buffer were merged!
+			LOG("%s: accept %d 0x%x 0x%x\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[2], (uint32_t)request->args[1]);
+			return;
+		}
+		case 0x47:{
+			// sockfd, magic address, size
+			// address size and address was reversed!
+			LOG("%s: connect %d 0x%x %d\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[2], (uint32_t)request->args[1]);
+			return;
+		}
+		case 0x44:{
+			// sockfd, level, name, magic address, opt size
+			// opt size and pointer was reversed!
+			LOG("%s: setsockopt %d 0x%x 0x%x 0x%x %d\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[1], (uint32_t)request->args[2], (uint32_t)request->args[4], (uint32_t)request->args[3]);
+			return;
+		}
+		case 0x31:{
+			// sockfd, level, name, magic address, opt size
+			// opt size and pointer was reversed!
+			LOG("%s: getsockopt %d 0x%x 0x%x 0x%x 0x%x\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[1], (uint32_t)request->args[2], (uint32_t)request->args[4], (uint32_t)request->args[3]);
+			return;
+		}
+		case 0x32:{
+			// sockfd, magics address, address size
+			LOG("%s: getsockname %d 0x%x 0x%x\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[2], (uint32_t)request->args[1]);
+			return;
+		}
+		case 0x35:{
+			// sockfd, magic address, address size
+			LOG("%s: getpeername %d 0x%x 0x%x\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[2], (uint32_t)request->args[1]);
+			return;
+		}
+		case 0x36:{
+			LOG("%s: send/sendto %d 0x%x %d 0x%x 0x%x %d\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[1], (uint32_t)request->args[2], (uint32_t)request->args[3], (uint32_t)request->args[4], (uint32_t)request->args[5]);
+			return;
+		}
+		case 0x39:{
+			LOG("%s: recv/recvfrom %d 0x%x %d 0x%x 0x%x 0x%x\n", __func__, (uint32_t)request->args[0], (uint32_t)request->args[1], (uint32_t)request->args[2], (uint32_t)request->args[3], (uint32_t)request->args[4], (uint32_t)request->args[5]);
+			return;
+		}
+		case 0x41:{
+			LOG("%s: close %d\n", __func__, (uint32_t)request->args[0]);
+			return;
+		}
+		case 0x45:{
+			LOG("%s: get mac address 0x%x\n", __func__, (uint32_t)request->args[0]);
+			return;
+		}
+	}
+
+	LOG("%s: unknown 0x%x 0x%x 0x%x 0x%x 0x%x\n", __func__, request->cmd, (uint32_t)request->args[0], (uint32_t)request->args[1], (uint32_t)request->args[2], (uint32_t)request->args[3]);
+}
+
 int handle_inet_request(SceKermitRequest *request){
-	LOG("%s: 0x%x not implemented\n", __func__, request->cmd);
+	#if 1
+	log_request(request);
+	#endif
+
 	return 0;
 }
 

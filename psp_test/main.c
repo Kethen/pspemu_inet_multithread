@@ -108,7 +108,7 @@ void tcp_send(){
 	addr.sin_addr.s_addr = sceNetInetInetAddr("127.0.0.1");
 
 	int sock_opt = 1;
-	LOG("%s: sceNetInetSetsockopt %d %d 0x%x %d\n", __func__, sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, sizeof(sock_opt));
+	LOG("%s: sceNetInetSetsockopt %d 0x%x 0x%x 0x%x %d\n", __func__, sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, sizeof(sock_opt));
 	int set_sockopt_status = sceNetInetSetsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, (socklen_t)sizeof(sock_opt));
 	if (set_sockopt_status < 0){
 		LOG("%s: failed setting tcp nodelay socket option, 0x%x\n", __func__, set_sockopt_status);
@@ -116,7 +116,7 @@ void tcp_send(){
 	}
 
 	sock_opt = 1;
-	LOG("%s: sceNetInetSetsockopt %d %d 0x%x %d\n", __func__, sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, sizeof(sock_opt));
+	LOG("%s: sceNetInetSetsockopt %d 0x%x 0x%x 0x%x %d\n", __func__, sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, sizeof(sock_opt));
 	set_sockopt_status = sceNetInetSetsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, (socklen_t)sizeof(sock_opt));
 	if (set_sockopt_status < 0){
 		LOG("%s: failed setting keepalive socket option, 0x%x\n", __func__, set_sockopt_status);
@@ -124,7 +124,7 @@ void tcp_send(){
 	}
 
 	socklen_t sockopt_len = sizeof(int);
-	LOG("%s: sceNetInetGetsockopt %d %d 0x%x %d\n", __func__, sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, sizeof(sock_opt));
+	LOG("%s: sceNetInetGetsockopt %d 0x%x 0x%x 0x%x %d\n", __func__, sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, sizeof(sock_opt));
 	int get_sockopt_status = sceNetInetGetsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, &sockopt_len);
 	if (get_sockopt_status < 0){
 		LOG("%s: failed getting socket option, 0x%x\n", __func__, get_sockopt_status);
@@ -136,7 +136,7 @@ void tcp_send(){
 	}
 
 	sockopt_len = sizeof(int);
-	LOG("%s: sceNetInetGetsockopt %d %d 0x%x %d\n", __func__, sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, sizeof(sock_opt));
+	LOG("%s: sceNetInetGetsockopt %d 0x%x 0x%x 0x%x %d\n", __func__, sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, sizeof(sock_opt));
 	get_sockopt_status = sceNetInetGetsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, &sockopt_len);
 	if (get_sockopt_status < 0){
 		LOG("%s: failed getting socket option, 0x%x\n", __func__, get_sockopt_status);
@@ -461,6 +461,10 @@ void test(){
 		}
 		break;
 	}
+
+	uint8_t local_mac[8] = {0};
+	sceNetGetLocalEtherAddr(local_mac);
+	LOG("%s: local mac is %x:%x:%x:%x:%x:%x\n", __func__, local_mac[0], local_mac[1], local_mac[2], local_mac[3], local_mac[4], local_mac[5]);
 
 	test_tcp();
 	test_udp();

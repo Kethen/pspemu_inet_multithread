@@ -6,9 +6,9 @@
 #include <stdio.h>
 
 #define LOG(...){ \
-	int _log_fd = sceIoOpen("ms0:/wlan_test_log.log", PSP_O_CREAT | PSP_O_APPEND | PSP_O_WRONLY, 0777); \
+	int _log_fd = sceIoOpen("ms0:/inet_test_log.log", PSP_O_CREAT | PSP_O_APPEND | PSP_O_WRONLY, 0777); \
 	if (_log_fd < 0){ \
-		_log_fd = sceIoOpen("ef0:/wlan_test_log.log", PSP_O_CREAT | PSP_O_APPEND | PSP_O_WRONLY, 0777); \
+		_log_fd = sceIoOpen("ef0:/inet_test_log.log", PSP_O_CREAT | PSP_O_APPEND | PSP_O_WRONLY, 0777); \
 	} \
 	if (_log_fd > 0){ \
 		char _log_buf[1024]; \
