@@ -17,6 +17,9 @@ int apply_patch(SceModule2 *mod){
 			u32 _name##Ref = sctrlHENFindFunction("sceNetInet_Library", "sceNetInet", _nid); \
 			LOG("%s: %s ref 0x%x\n", __func__, STR(_name), _name##Ref);
 
+		// socket functions that very likely needs to be wrapped
+
+		// mostly standard unix socket
 		MAKE_FUNCTION_REF(sceNetInetSocket, 0x8B7B220F);
 		MAKE_FUNCTION_REF(sceNetInetBind, 0x1A33F9AE);
 		MAKE_FUNCTION_REF(sceNetInetListen, 0xD10A1A7A);
@@ -35,6 +38,10 @@ int apply_patch(SceModule2 *mod){
 		MAKE_FUNCTION_REF(sceNetInetClose, 0x8D7284EA);
 		MAKE_FUNCTION_REF(sceNetInetPoll, 0x5BE8D595);
 		MAKE_FUNCTION_REF(sceNetInetSelect, 0x5BE8D595);
+
+		// sony stuffs
+		MAKE_FUNCTION_REF(sceNetInetCloseWithRST, 0x805502DD);
+		MAKE_FUNCTION_REF(sceNetInetSocketAbort, 0x80A21ABD);
 
 		#undef STR
 		#undef MAKE_FUNCTION_REF

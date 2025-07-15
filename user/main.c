@@ -25,12 +25,9 @@ SceUID kermit_wait_and_get_request_hook_id = -1;
 static int (*kermit_wait_and_get_request)(int type, SceKermitRequest **) = NULL;
 int (*kermit_respond_request)(int type, SceKermitRequest *, uint64_t response) = NULL;
 static void (*kermit_throw_error)(uint32_t error) = NULL;
-static SceKernelLwMutexWork *net_mutex_10DE050 = NULL;
-static SceKernelLwMutexWork *net_mutex_ADC948 = NULL;
-static int (*net_state_10DE07C) = NULL;
-static void (*net_func_13FF4)(uint32_t unk) = NULL;
-static uint32_t (*kermit_func_6F7C)(int type, uint32_t unk1, uint32_t unk2, uint32_t unk3) = NULL;
+static uint32_t (*kermit_swi_wait_get_request)(int type, uint32_t unk1, uint32_t unk2, uint32_t unk3) = NULL;
 static uint32_t *kermit_state_1015C = NULL;
+void *(*kermit_get_pspemu_addr_from_psp_addr)(uint32_t psp_addr, kermit_addr_mode mode, uint32_t size) = NULL;
 
 int kermit_wait_and_get_request_new(int type, SceKermitRequest **request){
 	uint32_t unknown_1;
@@ -42,16 +39,16 @@ int kermit_wait_and_get_request_new(int type, SceKermitRequest **request){
 		unknown_1 = 0;
 	}
 
-	//LOG("%s: kermit_state_1015C 0x%x, kermit_func_6F7C 0x%x\n", __func__, *kermit_state_1015C, kermit_func_6F7C);
+	//LOG("%s: kermit_state_1015C 0x%x, kermit_swi_wait_get_request 0x%x\n", __func__, *kermit_state_1015C, kermit_swi_wait_get_request);
 
 	//LOG("%s: doing swi with type 0x%x\n", __func__, type);
 
-	uint32_t unknown_2 = kermit_func_6F7C(type, unknown_1, 0, 0);
+	uint32_t unknown_2 = kermit_swi_wait_get_request(type, unknown_1, 0, 0);
 
 	//LOG("%s: swi done with result 0x%x\n", __func__, unknown_2);
 
 	if ((int32_t)unknown_2 < 0){
-		LOG("%s: throwing kermit_func_6F7C error 0x%x\n", __func__, unknown_2);
+		LOG("%s: throwing kermit_swi_wait_get_request error 0x%x\n", __func__, unknown_2);
 		kermit_throw_error(unknown_2);
 		*request = 0;
 		return 0;
@@ -148,12 +145,9 @@ static int get_functions_and_data(SceUID modid){
 	kermit_wait_and_get_request = (void *)(text_addr + 0x64D0 + 0x1);
 	kermit_respond_request = (void *)(text_addr + 0x6560 + 0x1);
 	kermit_throw_error = (void *)(text_addr + 0x4104 + 0X1);
-	net_mutex_10DE050 = (void *)(data_addr + 0x10DE050);
-	net_mutex_ADC948 = (void *)(data_addr + 0xADC948);
-	net_state_10DE07C = (void *)(data_addr + 0x10DE07C);
-	net_func_13FF4 = (void *)(text_addr + 0x13FF4 + 0x1);
-	kermit_func_6F7C = (void *)(text_addr + 0x6F7C);
+	kermit_swi_wait_get_request = (void *)(text_addr + 0x6F7C);
 	kermit_state_1015C = (void *)(data_addr + 0x1015c);
+	kermit_get_pspemu_addr_from_psp_addr = (void *)(text_addr + 0x6364 + 0x1);
 
 	return 0;
 }
