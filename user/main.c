@@ -82,7 +82,7 @@ int kermit_wait_and_get_request_patched(int type, SceKermitRequest **request){
 
 		int cmd = kermit_wait_and_get_request_new(type, request);
 
-		if (type == 10){
+		if (type == KERMIT_MODE_WLAN){
 			int handled = handle_inet_request(*request);
 			if (handled){
 				continue;

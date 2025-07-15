@@ -9,3 +9,7 @@ make
 cd ../psp_test
 make clean
 make
+
+cd ../pspnet_inet_kermit_redirect
+make clean
+make
