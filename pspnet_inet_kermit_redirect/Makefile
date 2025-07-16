@@ -1,7 +1,7 @@
 TARGET = pspnet_inet_kermit_redirect
 OBJS = main.o hooking.o hen.o kermit.o kermit_import.o
 
-CFLAGS = $(CFLAGS_EXTRA) -O2 -Os -G0 -Wall -fshort-wchar -fno-pic -mno-check-zero-division -fno-builtin -DDEBUG_LOG=1
+CFLAGS = $(CFLAGS_EXTRA) -Os -G0 -Wall -fshort-wchar -fno-pic -mno-check-zero-division -fno-builtin -DDEBUG_LOG=1
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS)
 

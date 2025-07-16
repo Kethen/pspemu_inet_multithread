@@ -11,104 +11,155 @@ PSP_MODULE_INFO("pspnet_inet_kermit_redirect", PSP_MODULE_KERNEL, 1, 0);
 
 STMOD_HANDLER last_handler = NULL;
 
+struct errno_slot{
+	int tid;
+	int errno;
+	uint64_t last_update;
+};
+
+struct errno_slot errnos[64] = {0};
+
+static int extract_result_and_save_errno(uint64_t error_res){
+	int32_t *val = (int32_t *)&error_res;
+	int tid = sceKernelGetThreadId();
+	int empty_slot = -1;
+	int oldest_slot = -1;
+	for(int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
+		if (empty_slot == -1 && errnos[i].tid){
+			empty_slot = i;
+		}
+		if (oldest_slot == -1 || errnos[oldest_slot].last_update > errnos[i].last_update){
+			oldest_slot = i;
+		}
+		if (errnos[i].tid == tid){
+			errnos[i].errno = val[0];
+			errnos[i].last_update = sceKernelGetSystemTimeWide();
+			return val[1];
+		}
+	}
+
+	if (empty_slot != -1){
+		errnos[empty_slot].tid = tid;
+		errnos[empty_slot].errno = val[0];
+		errnos[empty_slot].last_update = sceKernelGetSystemTimeWide();
+		return val[1];
+	}
+
+	errnos[oldest_slot].tid = tid;
+	errnos[oldest_slot].errno = val[0];
+	errnos[oldest_slot].last_update = sceKernelGetSystemTimeWide();
+	return val[1];
+}
+
 int sceNetInetSocketPatched(int domain, int type, int protocol){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET, (int64_t)domain, (int64_t)type, (int64_t)protocol);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetBindPatched(int sockfd, void *sockaddr, int addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_BIND, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetListenPatched(int sockfd, int backlog){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_LISTEN, (int64_t)sockfd, (int64_t)backlog);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetAcceptPatched(int sockfd, void *sockaddr, void *addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_ACCEPT, (int64_t)sockfd, (uint64_t)sockaddr, (uint64_t)addrlen);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetConnectPatched(int sockfd, void *sockaddr, int addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CONNECT, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSetsockoptPatched(int sockfd, int level, int optname, void *optval, int optlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SETSOCKOPT, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (int64_t)optlen);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval, void *optlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKOPT, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (uint64_t)optlen);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKNAME, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETPEERNAME, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSendPatched(int sockfd, void *buf, int size, int flags){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SEND, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSendtoPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, int addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDTO, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (int64_t)addrlen);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSendmsgPatched(int sockfd, void *msg, int flags){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDMSG, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECV, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, void *addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVFROM, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (uint64_t)addrlen);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetRecvmsgPatched(int sockfd, void *msg, int flags){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVMSG, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetClosePatched(int sockfd){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE, (int64_t)sockfd);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetPollPatched(void *fds, unsigned int nfds, int timeout){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_POLL, (uint64_t)fds, (uint64_t)nfds, (int64_t)timeout);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *exceptfds, void *timeout){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SELECT, (int64_t)nfds, (uint64_t)readfds, (uint64_t)writefds, (uint64_t)exceptfds, (uint64_t)timeout);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetCloseWithRSTPatched(int sockfd){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE_WITH_RST, (int64_t)sockfd);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSocketAbortPatched(int sockfd){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_ABORT, (int64_t)sockfd);
-	return *(int64_t *)&res;
+	return extract_result_and_save_errno(res);
+}
+
+int sceNetInetGetErrnoPatched(){
+	int tid = sceKernelGetThreadId();
+	for (int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
+		if (errnos[i].tid == tid){
+			return errnos[i].errno;
+		}
+	}
+	LOG("%s: warning, errno not found for thread %d\n", __func__, tid);
+	return 0;
 }
 
 int apply_patch(SceModule2 *mod){
@@ -147,6 +198,7 @@ int apply_patch(SceModule2 *mod){
 		// sony stuffs
 		SEARCH_AND_HIJACK(sceNetInetCloseWithRST, 0x805502DD);
 		SEARCH_AND_HIJACK(sceNetInetSocketAbort, 0x80A21ABD);
+		SEARCH_AND_HIJACK(sceNetInetGetErrno, 0xFBABE411);
 
 		#undef STR
 		#undef SEARCH_AND_HIJACK
@@ -160,6 +212,10 @@ int apply_patch(SceModule2 *mod){
 
 int module_start(SceSize args, void * argp){
 	INIT_LOG();
+
+	for (int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
+		errnos[i].tid = -1;
+	}
 
 	last_handler = sctrlHENSetStartModuleHandler(apply_patch);
 

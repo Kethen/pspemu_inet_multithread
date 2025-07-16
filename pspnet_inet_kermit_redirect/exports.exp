@@ -27,6 +27,7 @@ PSP_EXPORT_FUNC(sceNetInetPollPatched)
 PSP_EXPORT_FUNC(sceNetInetSelectPatched)
 PSP_EXPORT_FUNC(sceNetInetCloseWithRSTPatched)
 PSP_EXPORT_FUNC(sceNetInetSocketAbortPatched)
+PSP_EXPORT_FUNC(sceNetInetGetErrno)
 PSP_EXPORT_END
 
 PSP_END_EXPORTS
