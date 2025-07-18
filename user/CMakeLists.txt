@@ -8,7 +8,7 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   endif()
 endif()
 
-project(NoPspEmuDrm_user)
+project(pspemu_inet_multithread)
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wl,-q -O3 -std=gnu99")
@@ -28,7 +28,8 @@ target_link_libraries(pspemu_inet_multithread
 	SceKernelModulemgr_stub 
 	SceIofilemgr_stub
 	SceKernelThreadMgr_stub
-	SceNet_stub
+	SceNet_stub_weak
+	SceSysmodule_stub
 )
 
 

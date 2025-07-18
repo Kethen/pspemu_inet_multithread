@@ -52,6 +52,7 @@ static int extract_result_and_save_errno(uint64_t error_res){
 }
 
 int sceNetInetSocketPatched(int domain, int type, int protocol){
+	LOG("%s: begin\n", __func__);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET, (int64_t)domain, (int64_t)type, (int64_t)protocol);
 	return extract_result_and_save_errno(res);
 }
@@ -192,7 +193,7 @@ int apply_patch(SceModule2 *mod){
 		SEARCH_AND_HIJACK(sceNetInetRecvfrom, 0xC91142E4);
 		SEARCH_AND_HIJACK(sceNetInetRecvmsg, 0xEECE61D2);
 		SEARCH_AND_HIJACK(sceNetInetClose, 0x8D7284EA);
-		SEARCH_AND_HIJACK(sceNetInetPoll, 0x5BE8D595);
+		SEARCH_AND_HIJACK(sceNetInetPoll, 0xFAABB1DD);
 		SEARCH_AND_HIJACK(sceNetInetSelect, 0x5BE8D595);
 
 		// sony stuffs

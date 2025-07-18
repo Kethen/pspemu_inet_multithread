@@ -21,7 +21,7 @@ struct inet_worker{
 	bool busy;
 };
 
-struct inet_worker workers[8] = {0};
+struct inet_worker workers[16] = {0};
 int num_workers = 0;
 
 static int last_worker_used = 0;
@@ -99,18 +99,24 @@ static void log_request(SceKermitRequest *request){
 		}
 	}
 
-	LOG("%s: unknown 0x%x 0x%x 0x%x 0x%x 0x%x\n", __func__, request->cmd, (uint32_t)request->args[0], (uint32_t)request->args[1], (uint32_t)request->args[2], (uint32_t)request->args[3]);
+	char args[256];
+	int offset = 0;
+	for (int i = 0;i < 14;i++){
+		offset += sprintf(&args[offset], "0x%x ", (uint32_t)request->args[i]);
+	}
+
+	LOG("%s: unknown 0x%x %s\n", __func__, request->cmd, args);
 }
 
 int handle_inet_request(SceKermitRequest *request){
-	#if 0
+	#if 1
 	log_request(request);
 	#endif
 
 	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SOCKET_ABORT){
 		char args[256];
 		int offset = 0;
-		for(int i = 0;i < 14;i++){
+		for (int i = 0;i < 14;i++){
 			offset += sprintf(&args[offset], "0x%x ", (uint32_t)request->args[i]);
 		}
 		LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
@@ -746,11 +752,11 @@ int inet_init(){
 		return 0;
 	}
 
-	for(int i = 0;i < sizeof(sockfd_map) / sizeof(int32_t);i++){
+	for (int i = 0;i < sizeof(sockfd_map) / sizeof(int32_t);i++){
 		sockfd_map[i] = -1;
 	}
 
-	for(int i = 0;i < sizeof(workers) / sizeof(workers[0]);i++){
+	for (int i = 0;i < sizeof(workers) / sizeof(workers[0]);i++){
 		workers[num_workers].num_requests = 0;
 		workers[num_workers].should_stop = false;
 		workers[num_workers].busy = false;

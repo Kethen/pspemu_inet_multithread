@@ -6,7 +6,7 @@ PSP_EXPORT_FUNC(module_stop)
 PSP_EXPORT_VAR(module_info)
 PSP_EXPORT_END
 
-PSP_EXPORT_START(pspnet_inet_kermit_redirect, 0, 0x4001)
+PSP_EXPORT_START(inet_redirect, 0, 0x4001)
 PSP_EXPORT_FUNC(sceNetInetSocketPatched)
 PSP_EXPORT_FUNC(sceNetInetBindPatched)
 PSP_EXPORT_FUNC(sceNetInetListenPatched)
@@ -27,7 +27,7 @@ PSP_EXPORT_FUNC(sceNetInetPollPatched)
 PSP_EXPORT_FUNC(sceNetInetSelectPatched)
 PSP_EXPORT_FUNC(sceNetInetCloseWithRSTPatched)
 PSP_EXPORT_FUNC(sceNetInetSocketAbortPatched)
-PSP_EXPORT_FUNC(sceNetInetGetErrno)
+PSP_EXPORT_FUNC(sceNetInetGetErrnoPatched)
 PSP_EXPORT_END
 
 PSP_END_EXPORTS

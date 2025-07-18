@@ -168,6 +168,12 @@ int module_start(SceSize args, void *argp) {
 
 	LOG_INIT();
 
+	int module_load_status = sceSysmoduleLoadModule(SCE_SYSMODULE_NET);
+	if (module_load_status < 0){
+		LOG("%s: failed loading inet module, 0x%x\n", __func__, module_load_status);
+		return SCE_KERNEL_START_NO_RESIDENT;
+	}
+
 	#if DUMP
 	dump_pspemu(tai_info.modid);
 	sceKernelCreateThreadHookId = taiHookFunctionImport(&sceKernelCreateThreadRef, "ScePspemu", 0xCAE9ACE6, 0xC5C11EE7, sceKernelCreateThreadPatched);

@@ -21,11 +21,11 @@ u32 offset_populate_car_analog_control = 0;
 	LOG("%s: hijacking function at 0x%lx with 0x%lx\n", __func__, (u32)a, (u32)f); \
 	u32 _func_ = (u32)a; \
 	u32 _ff = (u32)f; \
-	int _interrupts = pspSdkDisableInterrupts(); \
-	sceKernelDcacheWritebackInvalidateAll(); \
 	if(u){ \
 		_ff = MakeSyscallStub(f); \
 	} \
+	int _interrupts = pspSdkDisableInterrupts(); \
+	sceKernelDcacheWritebackInvalidateAll(); \
 	static u32 patch_buffer[3]; \
 	_sw(_lw(_func_), (u32)patch_buffer); \
 	_sw(_lw(_func_ + 4), (u32)patch_buffer + 8);\

@@ -1,4 +1,4 @@
-NoPspEmuDrm_user:
+pspemu_inet_multithread:
   attributes: 0
   version:
     major: 1
