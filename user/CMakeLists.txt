@@ -18,6 +18,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fno-rtti -fno-exceptions")
 add_executable(pspemu_inet_multithread
 	main.c
 	inet.c
+	error.c
 )
 
 target_link_libraries(pspemu_inet_multithread
@@ -27,6 +28,7 @@ target_link_libraries(pspemu_inet_multithread
 	SceKernelModulemgr_stub 
 	SceIofilemgr_stub
 	SceKernelThreadMgr_stub
+	SceNet_stub
 )
 
 

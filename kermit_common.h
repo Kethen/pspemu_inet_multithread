@@ -14,7 +14,7 @@ typedef struct {
 #define KERMIT_MODE_WLAN 10
 
 typedef enum kermit_wlan_custom_command{
-	KERMIT_INET_SOCKET = 0,
+	KERMIT_INET_SOCKET = 1,
 	KERMIT_INET_BIND,
 	KERMIT_INET_LISTEN,
 	KERMIT_INET_ACCEPT,

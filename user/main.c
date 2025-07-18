@@ -28,6 +28,7 @@ static void (*kermit_throw_error)(uint32_t error) = NULL;
 static uint32_t (*kermit_swi_wait_get_request)(int type, uint32_t unk1, uint32_t unk2, uint32_t unk3) = NULL;
 static uint32_t *kermit_state_1015C = NULL;
 void *(*kermit_get_pspemu_addr_from_psp_addr)(uint32_t psp_addr, kermit_addr_mode mode, uint32_t size) = NULL;
+int (*kermit_pspemu_writeback_cache)(void *addr, int size) = NULL;
 
 int kermit_wait_and_get_request_new(int type, SceKermitRequest **request){
 	uint32_t unknown_1;
@@ -139,8 +140,8 @@ static int get_functions_and_data(SceUID modid){
 		return -1;
 	}
 
-	uint32_t text_addr = modinfo.segments[0].vaddr;
-	uint32_t data_addr = modinfo.segments[1].vaddr;
+	uint32_t text_addr = (uint32_t)modinfo.segments[0].vaddr;
+	uint32_t data_addr = (uint32_t)modinfo.segments[1].vaddr;
 
 	kermit_wait_and_get_request = (void *)(text_addr + 0x64D0 + 0x1);
 	kermit_respond_request = (void *)(text_addr + 0x6560 + 0x1);
@@ -148,6 +149,7 @@ static int get_functions_and_data(SceUID modid){
 	kermit_swi_wait_get_request = (void *)(text_addr + 0x6F7C);
 	kermit_state_1015C = (void *)(data_addr + 0x1015c);
 	kermit_get_pspemu_addr_from_psp_addr = (void *)(text_addr + 0x6364 + 0x1);
+	kermit_pspemu_writeback_cache = (void *)(text_addr + 0x6490 + 0x1);
 
 	return 0;
 }
