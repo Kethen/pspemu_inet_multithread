@@ -1,6 +1,8 @@
 #include <pspsdk.h>
+#include <psputilsforkernel.h>
 
 #include <string.h>
+#include <stdbool.h>
 
 #include "log.h"
 #include "hen.h"
@@ -163,8 +165,110 @@ int sceNetInetGetErrnoPatched(){
 	return 0;
 }
 
+SceModule2 game_module;
+bool game_module_found = false;
+
+int sceKernelQuerySystemCall(void *function);
+
+static void replace_import(PspModuleImport *import, uint32_t nid, void *function){
+	int syscall = sceKernelQuerySystemCall(function);
+	if (syscall < 0){
+		LOG("%s: bad syscall, fix the export on nid 0x%x\n", __func__, nid);
+		return;
+	}
+	for(int i = 0;i < import->funcCount;i++){
+		if (import->fnids[i] == nid){
+			uint32_t *addr = (uint32_t *)&import->funcs[i * 2];
+			uint32_t orig_instructions[2] = {addr[0], addr[1]};
+			addr[0] = 0x03E00008; // jr
+			addr[1] = 0x0000000C | (syscall << 6); //syscall
+			LOG("%s: 0x%x 0x%x -> 0x%x 0x%x (0x%x)\n", __func__, orig_instructions[0], orig_instructions[1], addr[0], addr[1], syscall);
+			sceKernelDcacheWritebackInvalidateRange(addr, 8);
+			sceKernelIcacheInvalidateRange(addr, 8);
+			return;
+		}
+	}
+	LOG("%s: nid 0x%x not found\n", __func__, nid);
+}
+
 int apply_patch(SceModule2 *mod){
+	if (mod->text_addr > 0x08800000 && mod->text_addr < 0x08900000 && strcmp("opnssmp", mod->modname) != 0){
+		LOG("%s: guessing this is the game, %s, saving module info for later\n", __func__, mod->modname);
+		game_module = *mod;
+		game_module_found = true;
+
+		if (last_handler != NULL){
+			return last_handler(mod);
+		}
+		return 0;
+	}
+
 	if (strcmp(mod->modname, "sceNetInet_Library") == 0){
+		if (!game_module_found){
+			LOG("%s: game module was not detected, not patching\n", __func__);
+			if (last_handler != NULL){
+				return last_handler(mod);
+			}
+			return 0;
+		}
+
+		PspModuleImport *inet_import = NULL;
+		int i = 0;
+		while (i < game_module.stub_size){
+			PspModuleImport *import = (PspModuleImport *)(game_module.stub_top + i);
+			if (import->name == NULL){
+				i += import->entLen * 4;
+				continue;
+			}
+			if (strcmp(import->name, "sceNetInet") == 0){
+				inet_import = import;
+				break;
+			}
+			i += import->entLen * 4;
+		}
+
+		if (inet_import == NULL){
+			LOG("%s: game does not seem to import inet, not patching\n", __func__);
+			if (last_handler != NULL){
+				return last_handler(mod);
+			}
+			return 0;
+		}
+
+		#define STR(s) #s
+		#define REPLACE_FUNCTION(_name, _nid) \
+			LOG("%s: replacing %s\n", __func__, STR(_name)); \
+			replace_import(inet_import, _nid, _name##Patched);
+
+		// mostly standard unix socket
+		REPLACE_FUNCTION(sceNetInetSocket, 0x8B7B220F);
+		REPLACE_FUNCTION(sceNetInetBind, 0x1A33F9AE);
+		REPLACE_FUNCTION(sceNetInetListen, 0xD10A1A7A);
+		REPLACE_FUNCTION(sceNetInetAccept, 0xDB094E1B);
+		REPLACE_FUNCTION(sceNetInetConnect, 0x410B34AA);
+		REPLACE_FUNCTION(sceNetInetSetsockopt, 0x2FE71FE7);
+		REPLACE_FUNCTION(sceNetInetGetsockopt, 0x4A114C7C);
+		REPLACE_FUNCTION(sceNetInetGetsockname, 0x162E6FD5);
+		REPLACE_FUNCTION(sceNetInetGetpeername, 0xE247B6D6);
+		REPLACE_FUNCTION(sceNetInetSend, 0x7AA671BC);
+		REPLACE_FUNCTION(sceNetInetSendto, 0x05038FC7);
+		REPLACE_FUNCTION(sceNetInetSendmsg, 0x774E36F4);
+		REPLACE_FUNCTION(sceNetInetRecv, 0xCDA85C99);
+		REPLACE_FUNCTION(sceNetInetRecvfrom, 0xC91142E4);
+		REPLACE_FUNCTION(sceNetInetRecvmsg, 0xEECE61D2);
+		REPLACE_FUNCTION(sceNetInetClose, 0x8D7284EA);
+		REPLACE_FUNCTION(sceNetInetPoll, 0xFAABB1DD);
+		REPLACE_FUNCTION(sceNetInetSelect, 0x5BE8D595);
+
+		// sony stuffs
+		REPLACE_FUNCTION(sceNetInetCloseWithRST, 0x805502DD);
+		REPLACE_FUNCTION(sceNetInetSocketAbort, 0x80A21ABD);
+		REPLACE_FUNCTION(sceNetInetGetErrno, 0xFBABE411);
+
+		#undef STR
+		#undef REPLACE_FUNCTION
+
+		#if 0
 		#define STR(s) #s
 		#define SEARCH_AND_HIJACK(_name, _nid) \
 			u32 _name##Ref = sctrlHENFindFunction("sceNetInet_Library", "sceNetInet", _nid); \
@@ -173,7 +277,7 @@ int apply_patch(SceModule2 *mod){
 
 		// socket functions that very likely needs to be wrapped
 
-		// probably discarding the originals for now
+		// discarding the originals for now
 		void *orig;
 
 		// mostly standard unix socket
@@ -203,6 +307,7 @@ int apply_patch(SceModule2 *mod){
 
 		#undef STR
 		#undef SEARCH_AND_HIJACK
+		#endif
 	}
 
 	if (last_handler != NULL){

@@ -187,6 +187,10 @@ int tcp_send_thread(SceSize args, void *argp){
 }
 
 void test_tcp(){
+	uint32_t *sceNetInetSocket_func = (uint32_t *)sceNetInetSocket;
+	LOG("%s: sceNetInetSocket instructions 0x%x 0x%x\n", __func__, sceNetInetSocket_func[0], sceNetInetSocket_func[1]);
+	#undef GET_JUMP_TARGET
+
 	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_STREAM, 0);
 	int sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
 	if (sock < 0){

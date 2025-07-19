@@ -29,6 +29,20 @@ typedef struct SceModule2 {
     unsigned int        segmentsize[4];
 } SceModule2;
 
+typedef struct
+{
+	const char *name;
+	unsigned short version;
+	unsigned short attribute;
+	unsigned char entLen;
+	unsigned char varCount;
+	unsigned short funcCount;
+	unsigned int *fnids;
+	unsigned int *funcs;
+	unsigned int *vnids;
+	unsigned int *vars;
+}PspModuleImport;
+
 typedef int (* STMOD_HANDLER)(SceModule2 *);
 
 STMOD_HANDLER sctrlHENSetStartModuleHandler(STMOD_HANDLER handler);
