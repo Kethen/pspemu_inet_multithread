@@ -12,6 +12,7 @@
 #include <netinet/tcp.h>
 
 #include <string.h>
+#include <stdbool.h>
 
 #include "log.h"
 
@@ -112,6 +113,18 @@ enum psp_poll_events{
 
 int sceNetInetPoll(struct psp_poll_fd *fds, int nfds, int timeout);
 
+static int psp_select_fd_is_set(uint32_t *field, int sockfd){
+	return field[sockfd >> 5] & (1 << (sockfd & 0x1f));
+}
+
+static void psp_select_set_fd(uint32_t *field, int sockfd, bool set){
+	if (set) {
+		field[sockfd >> 5] |= 1 << (sockfd & 0x1f);
+	}else{
+		field[sockfd >> 5] &= ~(1 << (sockfd & 0x1f));
+	}
+}
+
 void tcp_send(){
 	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_STREAM, 0);
 	int extra_sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
@@ -197,6 +210,33 @@ void tcp_send(){
 	}
 	if (pfd[1].revents & POLLIN){
 		LOG("%s: failed, got pollin event on sock\n", __func__);
+		return;
+	}
+
+	uint32_t readfds[8] = {0};
+	uint32_t writefds[8] = {0};
+	uint32_t exceptfds[8] = {0};
+	psp_select_set_fd(readfds, extra_sock, true);
+	psp_select_set_fd(writefds, extra_sock, true);
+	psp_select_set_fd(readfds, sock, true);
+	psp_select_set_fd(writefds, sock, true);
+
+	LOG("%s: sceNetInetSelect %d 0x%x 0x%x 0x%x %d\n", __func__, 256, readfds, writefds, exceptfds, 0);
+	int select_status = sceNetInetSelect(256, (void *)readfds, (void *)writefds, (void *)exceptfds, 0);
+	if (psp_select_fd_is_set(readfds, extra_sock)){
+		LOG("%s: failed, got read event on extra socket\n", __func__);
+		return;
+	}
+	if (psp_select_fd_is_set(writefds, extra_sock)){
+		LOG("%s: failed, got write event on extra socket\n", __func__);
+		return;
+	}
+	if (psp_select_fd_is_set(readfds, sock)){
+		LOG("%s: failed, got read event on socket\n", __func__);
+		return;
+	}
+	if (!psp_select_fd_is_set(writefds, sock)){
+		LOG("%s: failed, didn't get write event on socket\n", __func__);
 		return;
 	}
 
@@ -309,15 +349,42 @@ void test_tcp(){
 	LOG("%s: sceNetInetPoll 0x%x %d %d\n", __func__, pfd, 2, 0);
 	int poll_status = sceNetInetPoll(pfd, 2, 0);
 	if (pfd[0].revents & (POLLIN | POLLOUT)){
-		LOG("%s: failed, got poll event on extra sock\n", __func__);
+		LOG("%s: failed, got poll event on extra socket\n", __func__);
 		return;
 	}
 	if (!(pfd[1].revents & POLLIN)){
-		LOG("%s: failed, didn't get pollin event on sock\n", __func__);
+		LOG("%s: failed, didn't get pollin event on accept socket\n", __func__);
 		return;
 	}
 	if (!(pfd[1].revents & POLLOUT)){
-		LOG("%s: failed, didn't get pollout event on sock\n", __func__);
+		LOG("%s: failed, didn't get pollout event on accept socket\n", __func__);
+		return;
+	}
+
+	uint32_t readfds[8] = {0};
+	uint32_t writefds[8] = {0};
+	uint32_t exceptfds[8] = {0};
+	psp_select_set_fd(readfds, extra_sock, true);
+	psp_select_set_fd(writefds, extra_sock, true);
+	psp_select_set_fd(readfds, accept_sock, true);
+	psp_select_set_fd(writefds, accept_sock, true);
+
+	LOG("%s: sceNetInetSelect %d 0x%x 0x%x 0x%x %d\n", __func__, 256, readfds, writefds, exceptfds, 0);
+	int select_status = sceNetInetSelect(256, (void *)readfds, (void *)writefds, (void *)exceptfds, 0);
+	if (psp_select_fd_is_set(readfds, extra_sock)){
+		LOG("%s: failed, got read event on extra socket\n", __func__);
+		return;
+	}
+	if (psp_select_fd_is_set(writefds, extra_sock)){
+		LOG("%s: failed, got write event on extra socket\n", __func__);
+		return;
+	}
+	if (!psp_select_fd_is_set(readfds, accept_sock)){
+		LOG("%s: failed, didn't get read event on accept socket\n", __func__);
+		return;
+	}
+	if (!psp_select_fd_is_set(writefds, accept_sock)){
+		LOG("%s: failed, didn't get write event on accept socket\n", __func__);
 		return;
 	}
 
@@ -344,6 +411,8 @@ void test_tcp(){
 	sceNetInetClose(sock);
 	LOG("%s: sceNetInetClose %d\n", __func__, accept_sock);
 	sceNetInetClose(accept_sock);
+	LOG("%s: sceNetInetClose %d\n", __func__, extra_sock);
+	sceNetInetClose(extra_sock);
 
 	sceKernelWaitThreadEnd(tid, 0);
 	sceKernelDeleteThread(tid);
