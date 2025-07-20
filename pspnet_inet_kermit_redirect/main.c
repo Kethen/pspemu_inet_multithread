@@ -126,6 +126,7 @@ int sceNetInetSendPatched(int sockfd, void *buf, int size, int flags){
 
 int sceNetInetSendtoPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, int addrlen){
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
+	sceKernelDcacheWritebackInvalidateRange(dest_addr, addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDTO, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (int64_t)addrlen);
 	return extract_result_and_save_errno(res);
 }
@@ -161,14 +162,20 @@ int sceNetInetSendmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 }
 
 int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
+	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECV, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, void *addrlen){
+	sceKernelDcacheWritebackInvalidateRange(buf, size);
+	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+	sceKernelDcacheWritebackInvalidateRange(dest_addr, *(int32_t*)addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVFROM, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (uint64_t)addrlen);
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
+	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+	sceKernelDcacheWritebackInvalidateRange(dest_addr, *(int32_t*)addrlen);
 	return extract_result_and_save_errno(res);
 }
 

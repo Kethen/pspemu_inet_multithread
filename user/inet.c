@@ -120,7 +120,7 @@ static void log_request(SceKermitRequest *request){
 }
 
 int handle_inet_request(SceKermitRequest *request){
-	#if 1
+	#if 0
 	log_request(request);
 	#endif
 
@@ -130,7 +130,7 @@ int handle_inet_request(SceKermitRequest *request){
 		for (int i = 0;i < 14;i++){
 			offset += sprintf(&args[offset], "0x%x ", (uint32_t)request->args[i]);
 		}
-		LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
+		//LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
 		return 0;
 	}
 
@@ -170,7 +170,7 @@ int handle_inet_request(SceKermitRequest *request){
 		for (int i = 0;i < 14;i++){
 			offset += sprintf(&args[offset], "0x%x ", *(uint32_t*)&worker->queue[worker->num_requests]->args[i]);
 		}
-		LOG("%s: queuing request addr 0x%x, 0x%x %s\n", __func__, worker->queue[worker->num_requests], worker->queue[worker->num_requests]->cmd, args);
+		//LOG("%s: queuing request addr 0x%x, 0x%x %s\n", __func__, worker->queue[worker->num_requests], worker->queue[worker->num_requests]->cmd, args);
 
 		worker->num_requests++;
 		kermit_respond_request(KERMIT_MODE_WLAN, request, 0);
@@ -747,7 +747,8 @@ static void handle_request(struct request_slot *request){
 	if (response[1] < 0 && response[0] == 0){
 		response[0] = __vita_scenet_errno_to_errno(response[1]);
 		response[1] = -1;
-		LOG("%s: cmd 0x%x gets error 0x%x\n", __func__, request->cmd, response[0]);
+		if (response[0] != EBUSY && response[0] != EAGAIN)
+			LOG("%s: cmd 0x%x gets error 0x%x\n", __func__, request->cmd, response[0]);
 	}
 
 	request->ret = *(uint64_t*)response;
