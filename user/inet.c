@@ -287,13 +287,23 @@ static void handle_request(struct request_slot *request){
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			SceNetSockaddrIn *addr_out = request->args[1] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, sizeof(SceNetSockaddrIn));
 			int32_t *addrlen_in_out = request->args[2] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
-			response[1] = sceNetAccept(sockfd, (void *)addr_out, addrlen_in_out);
-			if (response[1] >= 0){
-				if (addr_out != NULL)
-					kermit_pspemu_writeback_cache(addr_out, sizeof(SceNetSockaddrIn));
-				if (addrlen_in_out != NULL)
-					kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(int32_t));
+			int accept_sockfd = sceNetAccept(sockfd, (void *)addr_out, addrlen_in_out);
+			if (accept_sockfd < 0){
+				response[1] = accept_sockfd;
+				break;
 			}
+			int psp_accept_sockfd = map_sockfd(accept_sockfd);
+			if (psp_accept_sockfd == -1){
+				sceNetSocketClose(accept_sockfd);
+				response[1] = -1;
+				response[0] = ENOMEM;
+				break;
+			}
+			response[1] = psp_accept_sockfd;
+			if (addr_out != NULL)
+				kermit_pspemu_writeback_cache(addr_out, sizeof(SceNetSockaddrIn));
+			if (addrlen_in_out != NULL)
+				kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(int32_t));
 
 			break;
 		}
