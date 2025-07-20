@@ -634,9 +634,9 @@ static void handle_request(struct request_slot *request){
 		}
 		case KERMIT_INET_SELECT:{
 			int32_t nfds = *(int32_t *)&request->args[0];
-			uint32_t *readfds = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[1], KERMIT_ADDR_MODE_INOUT, sizeof(uint32_t) * 8);
-			uint32_t *writefds = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(uint32_t) * 8);
-			uint32_t *exceptfds = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[3], KERMIT_ADDR_MODE_INOUT, sizeof(uint32_t) * 8);
+			uint32_t *readfds = *(uint32_t*)&request->args[1] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[1], KERMIT_ADDR_MODE_INOUT, sizeof(uint32_t) * 8);
+			uint32_t *writefds = *(uint32_t*)&request->args[2] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(uint32_t) * 8);
+			uint32_t *exceptfds = *(uint32_t*)&request->args[3] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[3], KERMIT_ADDR_MODE_INOUT, sizeof(uint32_t) * 8);
 			uint32_t timeout = *(uint32_t *)&request->args[4];
 
 			SceNetEpollEvent events[255] = {0};
@@ -664,16 +664,17 @@ static void handle_request(struct request_slot *request){
 				SceNetEpollEvent event = {0};
 
 				// only do these for now, since they map correctly to epoll
-				if (psp_select_fd_is_set(readfds, i)){
+				if (readfds != NULL && psp_select_fd_is_set(readfds, i)){
 					event.events |= SCE_NET_EPOLLIN;
 					psp_select_set_fd(readfds, i, false);
 				}
-				if (psp_select_fd_is_set(writefds, i)){
+				if (writefds != NULL && psp_select_fd_is_set(writefds, i)){
 					event.events |= SCE_NET_EPOLLOUT;
 					psp_select_set_fd(writefds, i, false);
 				}
 				// hm, what about exceptfds
-				psp_select_set_fd(exceptfds, i, false);
+				if (exceptfds != NULL)
+					psp_select_set_fd(exceptfds, i, false);
 
 				if (event.events == 0){
 					continue;
@@ -710,18 +711,21 @@ static void handle_request(struct request_slot *request){
 
 			if (response[1] != 0){
 				for (int i = 0;i < nfds;i++){
-					if (events[i].events & SCE_NET_EPOLLIN){
+					if (events[i].events & SCE_NET_EPOLLIN && readfds != NULL){
 						psp_select_set_fd(readfds, events[i].data.fd, true);
 					}
-					if (events[i].events & SCE_NET_EPOLLOUT){
+					if (events[i].events & SCE_NET_EPOLLOUT && writefds != NULL){
 						psp_select_set_fd(writefds, events[i].data.fd, true);
 					}
 				}
 			}
 
-			kermit_pspemu_writeback_cache(readfds, sizeof(uint32_t) * 8);
-			kermit_pspemu_writeback_cache(writefds, sizeof(uint32_t) * 8);
-			kermit_pspemu_writeback_cache(exceptfds, sizeof(uint32_t) * 8);
+			if (readfds != NULL)
+				kermit_pspemu_writeback_cache(readfds, sizeof(uint32_t) * 8);
+			if (writefds != NULL)
+				kermit_pspemu_writeback_cache(writefds, sizeof(uint32_t) * 8);
+			if (exceptfds != NULL)
+				kermit_pspemu_writeback_cache(exceptfds, sizeof(uint32_t) * 8);
 
 			break;
 		}
