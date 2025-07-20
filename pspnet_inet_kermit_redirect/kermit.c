@@ -85,12 +85,11 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, ...){
 	uint64_t response = 0;
 	sceKermitSendRequest661(request_uncached, mode, cmd, 14, 0, &response);
 
+	sceKernelDelayThread(50000);
 	while (!slot->done){
-		sceKernelDcacheWritebackInvalidateRange(slot, sizeof(struct request_slot));
-		sceKernelDelayThread(10000);
+		sceKernelDcacheInvalidateRange(&slot->done, sizeof(slot->done));
+		sceKernelDelayThread(100000);
 	}
-
-	sceKernelDcacheWritebackInvalidateRange(slot, sizeof(struct request_slot));
 
 	pspSdkSetK1(k1);
 
