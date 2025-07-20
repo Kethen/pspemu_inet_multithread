@@ -91,9 +91,35 @@ void term_inet(){
 
 const char test_data[] = "abcdefg";
 
-typedef int (*trans_function)(int sock, uint8_t *buf, int size, int flags);
+struct psp_poll_fd{
+	int sockfd;
+	int16_t events;
+	int16_t revents;
+};
+
+enum psp_poll_events{
+	POLLIN = 0x0001,
+	POLLPRI = 0x0002,
+	POLLOUT = 0x0004,
+	POLLRDNORM = 0x0040,
+	POLLRDBAND = 0x0080,
+	POLLWRBAND = 0x0100,
+
+	POLLERR = 0x0008,
+	POLLHUP = 0x0010,
+	POLLNVAL = 0x0020,
+};
+
+int sceNetInetPoll(struct psp_poll_fd *fds, int nfds, int timeout);
 
 void tcp_send(){
+	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_STREAM, 0);
+	int extra_sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
+	if (extra_sock < 0){
+		LOG("%s: failed creating extra socket, 0x%x 0x%x\n", __func__, extra_sock, sceNetInetGetErrno());
+		return;
+	}
+
 	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_STREAM, 0);
 	int sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
 	if (sock < 0){
@@ -154,6 +180,26 @@ void tcp_send(){
 		return;
 	}
 
+	struct psp_poll_fd pfd[2] = {0};
+	pfd[0].sockfd = extra_sock;
+	pfd[0].events = POLLIN | POLLOUT;
+	pfd[1].sockfd = sock;
+	pfd[1].events = POLLIN | POLLOUT;
+	LOG("%s: sceNetInetPoll 0x%x %d %d\n", __func__, pfd, 2, 0);
+	int poll_status = sceNetInetPoll(pfd, 2, 0);
+	if (pfd[0].revents & (POLLIN | POLLOUT)){
+		LOG("%s: failed, got poll event on extra sock\n", __func__);
+		return;
+	}
+	if (!(pfd[1].revents & POLLOUT)){
+		LOG("%s: failed, didn't get pollout event on sock\n", __func__);
+		return;
+	}
+	if (pfd[1].revents & POLLIN){
+		LOG("%s: failed, got pollin event on sock\n", __func__);
+		return;
+	}
+
 	LOG("%s: sceNetInetSend %d 0x%x %d %d\n", __func__, sock, test_data, sizeof(test_data), 0);
 	int send_status = sceNetInetSend(sock, test_data, sizeof(test_data), 0);
 	if (send_status < 0){
@@ -179,6 +225,8 @@ void tcp_send(){
 
 	LOG("%s: sceNetInetClose %d\n", __func__, sock);
 	sceNetInetClose(sock);
+	LOG("%s: sceNetInetClose %d\n", __func__, extra_sock);
+	sceNetInetClose(extra_sock);
 }
 
 int tcp_send_thread(SceSize args, void *argp){
@@ -187,9 +235,12 @@ int tcp_send_thread(SceSize args, void *argp){
 }
 
 void test_tcp(){
-	uint32_t *sceNetInetSocket_func = (uint32_t *)sceNetInetSocket;
-	LOG("%s: sceNetInetSocket instructions 0x%x 0x%x\n", __func__, sceNetInetSocket_func[0], sceNetInetSocket_func[1]);
-	#undef GET_JUMP_TARGET
+	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_STREAM, 0);
+	int extra_sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
+	if (extra_sock < 0){
+		LOG("%s: failed creating extra socket, 0x%x 0x%x\n", __func__, extra_sock, sceNetInetGetErrno());
+		return;
+	}
 
 	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_STREAM, 0);
 	int sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
@@ -245,6 +296,28 @@ void test_tcp(){
 	int accept_sock = sceNetInetAccept(sock, (struct sockaddr*)&incoming_addr, &addr_len);
 	if (accept_sock < 0){
 		LOG("%s: failed accepting connection, 0x%x 0x%x\n", __func__, accept_sock, sceNetInetGetErrno());
+		return;
+	}
+
+	sceKernelDelayThread(1000000);
+
+	struct psp_poll_fd pfd[2] = {0};
+	pfd[0].sockfd = extra_sock;
+	pfd[0].events = POLLIN | POLLOUT;
+	pfd[1].sockfd = accept_sock;
+	pfd[1].events = POLLIN | POLLOUT;
+	LOG("%s: sceNetInetPoll 0x%x %d %d\n", __func__, pfd, 2, 0);
+	int poll_status = sceNetInetPoll(pfd, 2, 0);
+	if (pfd[0].revents & (POLLIN | POLLOUT)){
+		LOG("%s: failed, got poll event on extra sock\n", __func__);
+		return;
+	}
+	if (!(pfd[1].revents & POLLIN)){
+		LOG("%s: failed, didn't get pollin event on sock\n", __func__);
+		return;
+	}
+	if (!(pfd[1].revents & POLLOUT)){
+		LOG("%s: failed, didn't get pollout event on sock\n", __func__);
 		return;
 	}
 
