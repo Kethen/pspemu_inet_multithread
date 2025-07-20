@@ -30,6 +30,16 @@ static int last_worker_used = 0;
 int32_t sockfd_map[255];
 SceUID sockfd_map_mutex = -1;
 
+static void translate_sockopt(int psp_level, int psp_optname, int *level, int *optname){
+	if (psp_level == 0xffff && psp_optname == 0x1009){
+		*level = psp_level;
+		*optname = SCE_NET_SO_NBIO;
+		return;
+	}
+	*level = psp_level;
+	*optname = psp_optname;
+}
+
 static void log_request(SceKermitRequest *request){
 	LOG("%s: kermit request addr 0x%x\n", __func__, request);
 	switch(request->cmd){
@@ -324,8 +334,11 @@ static void handle_request(struct request_slot *request){
 		case KERMIT_INET_SETSOCKOPT:{
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
-			int32_t level = *(int32_t *)&request->args[1];
-			int32_t optname = *(int32_t *)&request->args[2];
+			int32_t psp_level = *(int32_t *)&request->args[1];
+			int32_t psp_optname = *(int32_t *)&request->args[2];
+			int32_t level = 0;
+			int32_t optname = 0;
+			translate_sockopt(psp_level, psp_optname, &level, &optname);
 			int32_t optlen = *(int32_t *)&request->args[4];
 			void *optval = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[3], KERMIT_ADDR_MODE_IN, optlen);
 			response[1] = sceNetSetsockopt(sockfd, level, optname, optval, optlen);
@@ -335,8 +348,11 @@ static void handle_request(struct request_slot *request){
 		case KERMIT_INET_GETSOCKOPT:{
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
-			int32_t level = *(int32_t *)&request->args[1];
-			int32_t optname = *(int32_t *)&request->args[2];
+			int32_t psp_level = *(int32_t *)&request->args[1];
+			int32_t psp_optname = *(int32_t *)&request->args[2];
+			int32_t level = 0;
+			int32_t optname = 0;
+			translate_sockopt(psp_level, psp_optname, &level, &optname);
 			int32_t *optlen_in_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			void *optval_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[3], KERMIT_ADDR_MODE_OUT, *optlen_in_out);
 			response[1] = sceNetGetsockopt(sockfd, level, optname, optval_out, optlen_in_out);
