@@ -14,7 +14,7 @@
 struct inet_worker{
 	SceUID sema;
 	SceUID queue_mutex;
-	SceKermitRequest *queue[512];
+	struct request_slot *queue[16];
 	int num_requests;
 	SceUID tid;
 	bool should_stop;
@@ -31,6 +31,7 @@ int32_t sockfd_map[255];
 SceUID sockfd_map_mutex = -1;
 
 static void log_request(SceKermitRequest *request){
+	LOG("%s: kermit request addr 0x%x\n", __func__, request);
 	switch(request->cmd){
 		// socket number all have an offset
 		// 0xabd54000? 0x0bd54000 might be a kermit magic address on the psp side, it keeps being used and I don't see real addresses; might end up needing a psp side plugin as well
@@ -102,7 +103,7 @@ static void log_request(SceKermitRequest *request){
 	char args[256];
 	int offset = 0;
 	for (int i = 0;i < 14;i++){
-		offset += sprintf(&args[offset], "0x%x ", (uint32_t)request->args[i]);
+		offset += sprintf(&args[offset], "0x%x ", *(uint32_t*)&request->args[i]);
 	}
 
 	LOG("%s: unknown 0x%x %s\n", __func__, request->cmd, args);
@@ -149,12 +150,20 @@ int handle_inet_request(SceKermitRequest *request){
 			// not good, in fact very bad
 			LOG("%s: work queue is full! waiting...\n", __func__);
 			sceKernelUnlockMutex(worker->queue_mutex, 1);
-			sceKernelDelayThread(100000);
+			sceKernelDelayThread(10000);
 			continue;
 		}
 
-		worker->queue[worker->num_requests] = request;
+		worker->queue[worker->num_requests] = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_IN, sizeof(struct request_slot));
+		char args[256];
+		int offset = 0;
+		for (int i = 0;i < 14;i++){
+			offset += sprintf(&args[offset], "0x%x ", *(uint32_t*)&worker->queue[worker->num_requests]->args[i]);
+		}
+		LOG("%s: queuing request addr 0x%x, 0x%x %s\n", __func__, worker->queue[worker->num_requests], worker->queue[worker->num_requests]->cmd, args);
+
 		worker->num_requests++;
+		kermit_respond_request(KERMIT_MODE_WLAN, request, 0);
 
 		sceKernelSignalSema(worker->sema, 1);
 
@@ -234,7 +243,7 @@ static void remove_sockfd(int psp_sockfd){
 	sceKernelUnlockMutex(sockfd_map_mutex, 1);
 }
 
-static void handle_request(SceKermitRequest *request){
+static void handle_request(struct request_slot *request){
 	int32_t response[2] = {0};
 
 	switch(request->cmd){
@@ -708,9 +717,17 @@ static void handle_request(SceKermitRequest *request){
 	if (response[1] < 0 && response[0] == 0){
 		response[0] = __vita_scenet_errno_to_errno(response[1]);
 		response[1] = -1;
+		LOG("%s: cmd 0x%x gets error 0x%x\n", __func__, request->cmd, response[0]);
 	}
 
-	kermit_respond_request(KERMIT_MODE_WLAN, request, *(uint64_t *)response);
+	request->ret = *(uint64_t*)response;
+	kermit_pspemu_writeback_cache(&request->ret, sizeof(&request->ret));
+
+	asm volatile ("" : : : "memory");
+
+	request->done = true;
+	kermit_pspemu_writeback_cache(&request->done, sizeof(&request->done));
+
 }
 
 static int inet_queue_worker(unsigned int args, void *argp){
@@ -727,8 +744,9 @@ static int inet_queue_worker(unsigned int args, void *argp){
 		// Acquire the queue and copy it
 		sceKernelLockMutex(worker->queue_mutex, 1, 0);
 		int num_requests = worker->num_requests;
-		SceKermitRequest *queue[sizeof(worker->queue) / sizeof(worker->queue[0])];
-		memcpy(queue, worker->queue, sizeof(SceKermitRequest *) * num_requests);
+		struct request_slot *queue[sizeof(worker->queue) / sizeof(worker->queue[0])];
+		memcpy(queue, worker->queue, sizeof(struct request_slot *) * num_requests);
+		worker->num_requests = 0;
 		sceKernelUnlockMutex(worker->queue_mutex, 1);
 
 		for (int i = 0;i < num_requests;i++){

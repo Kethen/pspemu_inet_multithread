@@ -97,7 +97,7 @@ void tcp_send(){
 	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_STREAM, 0);
 	int sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
 	if (sock < 0){
-		LOG("%s: failed creating socket, 0x%x\n", __func__, sock);
+		LOG("%s: failed creating socket, 0x%x 0x%x\n", __func__, sock, sceNetInetGetErrno());
 		return;
 	}
 
@@ -111,7 +111,7 @@ void tcp_send(){
 	LOG("%s: sceNetInetSetsockopt %d 0x%x 0x%x 0x%x %d\n", __func__, sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, sizeof(sock_opt));
 	int set_sockopt_status = sceNetInetSetsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, (socklen_t)sizeof(sock_opt));
 	if (set_sockopt_status < 0){
-		LOG("%s: failed setting tcp nodelay socket option, 0x%x\n", __func__, set_sockopt_status);
+		LOG("%s: failed setting tcp nodelay socket option, 0x%x 0x%x\n", __func__, set_sockopt_status, sceNetInetGetErrno());
 		return;
 	}
 
@@ -119,7 +119,7 @@ void tcp_send(){
 	LOG("%s: sceNetInetSetsockopt %d 0x%x 0x%x 0x%x %d\n", __func__, sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, sizeof(sock_opt));
 	set_sockopt_status = sceNetInetSetsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, (socklen_t)sizeof(sock_opt));
 	if (set_sockopt_status < 0){
-		LOG("%s: failed setting keepalive socket option, 0x%x\n", __func__, set_sockopt_status);
+		LOG("%s: failed setting keepalive socket option, 0x%x 0x%x\n", __func__, set_sockopt_status, sceNetInetGetErrno());
 		return;
 	}
 
@@ -127,7 +127,7 @@ void tcp_send(){
 	LOG("%s: sceNetInetGetsockopt %d 0x%x 0x%x 0x%x %d\n", __func__, sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, sizeof(sock_opt));
 	int get_sockopt_status = sceNetInetGetsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &sock_opt, &sockopt_len);
 	if (get_sockopt_status < 0){
-		LOG("%s: failed getting socket option, 0x%x\n", __func__, get_sockopt_status);
+		LOG("%s: failed getting socket option, 0x%x 0x%x\n", __func__, get_sockopt_status, sceNetInetGetErrno());
 		return;
 	}
 	if (!sock_opt){
@@ -139,7 +139,7 @@ void tcp_send(){
 	LOG("%s: sceNetInetGetsockopt %d 0x%x 0x%x 0x%x %d\n", __func__, sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, sizeof(sock_opt));
 	get_sockopt_status = sceNetInetGetsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &sock_opt, &sockopt_len);
 	if (get_sockopt_status < 0){
-		LOG("%s: failed getting socket option, 0x%x\n", __func__, get_sockopt_status);
+		LOG("%s: failed getting socket option, 0x%x 0x%x\n", __func__, get_sockopt_status, sceNetInetGetErrno());
 		return;
 	}
 	if (!sock_opt){
@@ -150,14 +150,14 @@ void tcp_send(){
 	LOG("%s: sceNetInetConnect %d, 0x%x, %d\n", __func__, sock, &addr, sizeof(addr));
 	int connect_status = sceNetInetConnect(sock, (struct sockaddr*)&addr, sizeof(addr));
 	if (connect_status < 0){
-		LOG("%s: failed connecting, 0x%x\n", __func__, connect_status);
+		LOG("%s: failed connecting, 0x%x 0x%x\n", __func__, connect_status, sceNetInetGetErrno());
 		return;
 	}
 
 	LOG("%s: sceNetInetSend %d 0x%x %d %d\n", __func__, sock, test_data, sizeof(test_data), 0);
 	int send_status = sceNetInetSend(sock, test_data, sizeof(test_data), 0);
 	if (send_status < 0){
-		LOG("%s: failed sending, 0x%x\n", __func__, send_status);
+		LOG("%s: failed sending, 0x%x 0x%x\n", __func__, send_status, sceNetInetGetErrno());
 		return;
 	}
 	if (send_status != sizeof(test_data)){
@@ -194,7 +194,7 @@ void test_tcp(){
 	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_STREAM, 0);
 	int sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
 	if (sock < 0){
-		LOG("%s: failed creating socket, 0x%x\n", __func__, sock);
+		LOG("%s: failed creating socket, 0x%x 0x%x\n", __func__, sock, sceNetInetGetErrno());
 		return;
 	}
 
@@ -203,18 +203,19 @@ void test_tcp(){
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(27015);
 	addr.sin_addr.s_addr = sceNetInetInetAddr("127.0.0.1");
+	LOG("%s: s_addr 0x%x\n", __func__, addr.sin_addr.s_addr);
 
 	LOG("%s: sceNetInetBind %d 0x%x %d\n", __func__, sock, &addr, sizeof(addr));
 	int bind_result = sceNetInetBind(sock, (struct sockaddr*)&addr, sizeof(addr));
 	if (bind_result < 0){
-		LOG("%s: failed binding socket, 0x%x\n", __func__, bind_result);
+		LOG("%s: failed binding socket, 0x%x 0x%x\n", __func__, bind_result, sceNetInetGetErrno());
 		return;
 	}
 
 	LOG("%s: sceNetInetListen %d %d\n", __func__, sock, 100);
 	int listen_result = sceNetInetListen(sock, 100);
 	if (listen_result < 0){
-		LOG("%s: failed setting up listen, 0x%x\n", __func__, listen_result);
+		LOG("%s: failed setting up listen, 0x%x 0x%x\n", __func__, listen_result, sceNetInetGetErrno());
 		return;
 	}
 
@@ -243,7 +244,7 @@ void test_tcp(){
 	LOG("%s: sceNetInetAccept %d 0x%x 0x%x\n", __func__, sock, &incoming_addr, &addr_len);
 	int accept_sock = sceNetInetAccept(sock, (struct sockaddr*)&incoming_addr, &addr_len);
 	if (accept_sock < 0){
-		LOG("%s: failed accepting connection, 0x%x\n", __func__, accept_sock);
+		LOG("%s: failed accepting connection, 0x%x 0x%x\n", __func__, accept_sock, sceNetInetGetErrno());
 		return;
 	}
 
@@ -251,7 +252,7 @@ void test_tcp(){
 	LOG("%s: sceNetInetRecv %d 0x%x %d %d\n", __func__, accept_sock, recv_buf, sizeof(recv_buf), 0);
 	int recv_state = sceNetInetRecv(accept_sock, recv_buf, sizeof(recv_buf), 0);
 	if (recv_state < 0){
-		LOG("%s: failed receiving data, 0x%x\n", __func__, recv_state);
+		LOG("%s: failed receiving data, 0x%x 0x%x\n", __func__, recv_state, sceNetInetGetErrno());
 		return;
 	}
 
@@ -281,7 +282,7 @@ void udp_send(){
 	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_DGRAM, 0);
 	int sock = sceNetInetSocket(AF_INET, SOCK_DGRAM, 0);
 	if (sock < 0){
-		LOG("%s: failed creating socket, 0x%x\n", __func__, sock);
+		LOG("%s: failed creating socket, 0x%x 0x%x\n", __func__, sock, sceNetInetGetErrno());
 		return;
 	}
 
@@ -294,7 +295,7 @@ void udp_send(){
 	LOG("%s: sceNetInetBind %d 0x%x %d\n", __func__, sock, &addr, sizeof(addr));
 	int bind_result = sceNetInetBind(sock, (struct sockaddr*)&addr, sizeof(addr));
 	if (bind_result < 0){
-		LOG("%s: failed binding socket, 0x%x\n", __func__, bind_result);
+		LOG("%s: failed binding socket, 0x%x 0x%x\n", __func__, bind_result, sceNetInetGetErrno());
 		return;
 	}
 
@@ -307,7 +308,7 @@ void udp_send(){
 	LOG("%s: sceNetInetSendto %d 0x%x %d 0x%x 0x%x %d\n", __func__, sock, test_data, sizeof(test_data), 0, &to_addr, sizeof(to_addr));
 	int send_status = sceNetInetSendto(sock, test_data, sizeof(test_data), 0, (struct sockaddr*)&to_addr, sizeof(to_addr));
 	if (send_status < 0){
-		LOG("%s: failed sending, 0x%x\n", __func__, send_status);
+		LOG("%s: failed sending, 0x%x 0x%x\n", __func__, send_status, sceNetInetGetErrno());
 		return;
 	}
 
@@ -326,7 +327,7 @@ void test_udp(){
 	LOG("%s: sceNetInetSocket 0x%x 0x%x 0x%x\n", __func__, AF_INET, SOCK_DGRAM, 0);
 	int sock = sceNetInetSocket(AF_INET, SOCK_DGRAM, 0);
 	if (sock < 0){
-		LOG("%s: failed creating socket, 0x%x\n", __func__, sock);
+		LOG("%s: failed creating socket, 0x%x 0x%x\n", __func__, sock, sceNetInetGetErrno());
 		return;
 	}
 
@@ -339,7 +340,7 @@ void test_udp(){
 	LOG("%s: sceNetInetBind %d 0x%x %d\n", __func__, sock, &addr, sizeof(addr));
 	int bind_result = sceNetInetBind(sock, (struct sockaddr*)&addr, sizeof(addr));
 	if (bind_result < 0){
-		LOG("%s: failed binding socket, 0x%x\n", __func__, bind_result);
+		LOG("%s: failed binding socket, 0x%x 0x%x\n", __func__, bind_result, sceNetInetGetErrno());
 		return;
 	}
 
@@ -356,7 +357,7 @@ void test_udp(){
 	LOG("%s: sceNetInetRecvfrom %d 0x%x %d 0x%x 0x%x %d\n", __func__, sock, recv_buf, sizeof(test_data), 0, &from_addr, sizeof(from_addr));
 	int recv_status = sceNetInetRecvfrom(sock, recv_buf, sizeof(test_data), 0, (struct sockaddr *)&from_addr, &addr_size);
 	if (recv_status < 0){
-		LOG("%s: failed receiving, 0x%x\n", __func__, recv_status);
+		LOG("%s: failed receiving, 0x%x 0x%x\n", __func__, recv_status, sceNetInetGetErrno());
 		return;
 	}
 

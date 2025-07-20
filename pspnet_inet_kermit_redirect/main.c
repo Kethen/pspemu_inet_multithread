@@ -1,5 +1,6 @@
 #include <pspsdk.h>
 #include <psputilsforkernel.h>
+#include <pspthreadman.h>
 
 #include <string.h>
 #include <stdbool.h>
@@ -54,12 +55,13 @@ static int extract_result_and_save_errno(uint64_t error_res){
 }
 
 int sceNetInetSocketPatched(int domain, int type, int protocol){
-	LOG("%s: begin\n", __func__);
+	//LOG("%s: begin\n", __func__);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET, (int64_t)domain, (int64_t)type, (int64_t)protocol);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetBindPatched(int sockfd, void *sockaddr, int addrlen){
+	sceKernelDcacheWritebackInvalidateRange(sockaddr, addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_BIND, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
 	return extract_result_and_save_errno(res);
 }
@@ -70,62 +72,126 @@ int sceNetInetListenPatched(int sockfd, int backlog){
 }
 
 int sceNetInetAcceptPatched(int sockfd, void *sockaddr, void *addrlen){
+	if (addrlen != NULL)
+		sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_ACCEPT, (int64_t)sockfd, (uint64_t)sockaddr, (uint64_t)addrlen);
+	if (addrlen != NULL)
+		sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+	if (sockaddr != NULL)
+		sceKernelDcacheWritebackInvalidateRange(sockaddr, *(int32_t*)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetConnectPatched(int sockfd, void *sockaddr, int addrlen){
+	sceKernelDcacheWritebackInvalidateRange(sockaddr, addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CONNECT, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSetsockoptPatched(int sockfd, int level, int optname, void *optval, int optlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SETSOCKOPT, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (int64_t)optlen);
+	sceKernelDcacheWritebackInvalidateRange(optval, optlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval, void *optlen){
+	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKOPT, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (uint64_t)optlen);
+	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
+	sceKernelDcacheWritebackInvalidateRange(optval, *(int32_t*)optlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
+	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKNAME, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
+	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
+	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETPEERNAME, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
+	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSendPatched(int sockfd, void *buf, int size, int flags){
+	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SEND, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSendtoPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, int addrlen){
+	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDTO, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (int64_t)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
-int sceNetInetSendmsgPatched(int sockfd, void *msg, int flags){
+// these structs are from vitasdk https://github.com/vitasdk/vita-headers/blob/master/include/psp2common/net.h
+struct SceNetIovec {
+	void *iov_base;
+	unsigned int iov_len;
+} SceNetIovec;
+
+struct SceNetMsghdr {
+	void *msg_name;
+	unsigned int msg_namelen;
+	struct SceNetIovec *msg_iov;
+	int msg_iovlen;
+	void *msg_control;
+	unsigned int msg_controllen;
+	int msg_flags;
+} SceNetMsghdr;
+
+int sceNetInetSendmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
+	sceKernelDcacheWritebackInvalidateRange(msg, sizeof(SceNetMsghdr));
+	if (msg->msg_name != NULL && msg->msg_namelen != 0){
+		sceKernelDcacheWritebackInvalidateRange(msg->msg_name, msg->msg_namelen);
+	}
+	if (msg->msg_iovlen != 0 && msg->msg_iov != NULL){
+		for(int i = 0;i < msg->msg_iovlen;i++){
+			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
+		}
+	}
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDMSG, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECV, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
+	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, void *addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVFROM, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (uint64_t)addrlen);
+	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	return extract_result_and_save_errno(res);
 }
 
-int sceNetInetRecvmsgPatched(int sockfd, void *msg, int flags){
+int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
+	sceKernelDcacheWritebackInvalidateRange(msg, sizeof(SceNetMsghdr));
+	if (msg->msg_name != NULL && msg->msg_namelen != 0){
+		sceKernelDcacheWritebackInvalidateRange(msg->msg_name, msg->msg_namelen);
+	}
+	if (msg->msg_iovlen != 0 && msg->msg_iov != NULL){
+		for(int i = 0;i < msg->msg_iovlen;i++){
+			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
+		}
+	}
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVMSG, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
+	sceKernelDcacheWritebackInvalidateRange(msg, sizeof(SceNetMsghdr));
+	if (msg->msg_name != NULL && msg->msg_namelen != 0){
+		sceKernelDcacheWritebackInvalidateRange(msg->msg_name, msg->msg_namelen);
+	}
+	if (msg->msg_iovlen != 0 && msg->msg_iov != NULL){
+		for(int i = 0;i < msg->msg_iovlen;i++){
+			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
+		}
+	}
 	return extract_result_and_save_errno(res);
 }
 
@@ -134,13 +200,33 @@ int sceNetInetClosePatched(int sockfd){
 	return extract_result_and_save_errno(res);
 }
 
-int sceNetInetPollPatched(void *fds, unsigned int nfds, int timeout){
+struct psp_poll_fd{
+	int sockfd;
+	int16_t events;
+	int16_t revents;
+};
+
+int sceNetInetPollPatched(struct psp_poll_fd *fds, unsigned int nfds, int timeout){
+	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_POLL, (uint64_t)fds, (uint64_t)nfds, (int64_t)timeout);
+	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *exceptfds, void *timeout){
+	if (readfds != NULL)
+		sceKernelDcacheWritebackInvalidateRange(readfds, 256);
+	if (writefds != NULL)
+		sceKernelDcacheWritebackInvalidateRange(writefds, 256);
+	if (exceptfds != NULL)
+		sceKernelDcacheWritebackInvalidateRange(exceptfds, 256);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SELECT, (int64_t)nfds, (uint64_t)readfds, (uint64_t)writefds, (uint64_t)exceptfds, (uint64_t)timeout);
+	if (readfds != NULL)
+		sceKernelDcacheWritebackInvalidateRange(readfds, 256);
+	if (writefds != NULL)
+		sceKernelDcacheWritebackInvalidateRange(writefds, 256);
+	if (exceptfds != NULL)
+		sceKernelDcacheWritebackInvalidateRange(exceptfds, 256);
 	return extract_result_and_save_errno(res);
 }
 
@@ -319,13 +405,14 @@ int apply_patch(SceModule2 *mod){
 int module_start(SceSize args, void * argp){
 	INIT_LOG();
 
+	LOG("%s: begin\n", __func__);
+
 	for (int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
 		errnos[i].tid = -1;
 	}
 
 	last_handler = sctrlHENSetStartModuleHandler(apply_patch);
 
-	LOG("%s: begin\n", __func__);
 	return 0;
 }
 

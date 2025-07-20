@@ -11,6 +11,16 @@ typedef struct {
 	uint64_t args[14]; // 0x10
 } SceKermitRequest; //0x80
 
+struct request_slot{
+	uint32_t mode;
+	uint32_t cmd;
+	int32_t in_use;
+	int32_t done;
+	uint64_t args[14];
+	uint64_t ret;
+	char buf[sizeof(SceKermitRequest) + 0x40];
+};
+
 #define KERMIT_MODE_WLAN 10
 
 typedef enum kermit_wlan_custom_command{
