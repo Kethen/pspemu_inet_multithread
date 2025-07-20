@@ -15,7 +15,7 @@
 
 #include "log.h"
 
-PSP_MODULE_INFO("WLAN test", 0x1000, 1, 1);
+PSP_MODULE_INFO("inet test", 0x1000, 1, 1);
 PSP_HEAP_SIZE_KB(1000);
 
 #define max_lines
@@ -276,6 +276,22 @@ void test_tcp(){
 	sceKernelDeleteThread(tid);
 }
 
+// these structs are from vitasdk https://github.com/vitasdk/vita-headers/blob/master/include/psp2common/net.h
+struct SceNetIovec {
+	void *iov_base;
+	unsigned int iov_len;
+} SceNetIovec;
+
+struct SceNetMsghdr {
+	void *msg_name;
+	unsigned int msg_namelen;
+	struct SceNetIovec *msg_iov;
+	int msg_iovlen;
+	void *msg_control;
+	unsigned int msg_controllen;
+	int msg_flags;
+} SceNetMsghdr;
+
 void udp_send(){
 	sceKernelDelayThread(1000000);
 
@@ -309,6 +325,27 @@ void udp_send(){
 	int send_status = sceNetInetSendto(sock, test_data, sizeof(test_data), 0, (struct sockaddr*)&to_addr, sizeof(to_addr));
 	if (send_status < 0){
 		LOG("%s: failed sending, 0x%x 0x%x\n", __func__, send_status, sceNetInetGetErrno());
+		return;
+	}
+
+	sceKernelDelayThread(1000000);
+
+	struct SceNetMsghdr msg = {0};
+	msg.msg_name = &to_addr;
+	msg.msg_namelen = sizeof(to_addr);
+	uint32_t send_buf[sizeof(test_data)] = {0};
+	struct SceNetIovec msg_iov[sizeof(test_data)] = {0};
+	for (int i = 0;i < sizeof(test_data);i++){
+		send_buf[i] = test_data[i];
+		msg_iov[i].iov_base = &send_buf[i];
+		msg_iov[i].iov_len = 1;
+	}
+	msg.msg_iov = msg_iov;
+	msg.msg_iovlen = sizeof(test_data);
+	LOG("%s: sceNetInetSendmsg %d 0x%x 0x%x\n", __func__, sock, &msg, 0);
+	send_status = sceNetInetSendmsg(sock, (void *)&msg, 0);
+	if (send_status < 0){
+		LOG("%s: failed sending as message, 0x%x 0x%x\n", __func__, send_status, sceNetInetGetErrno());
 		return;
 	}
 
@@ -380,6 +417,45 @@ void test_udp(){
 		return;
 	}
 	LOG("%s: udp data received\n", __func__);
+
+	sceKernelDelayThread(1000000);
+
+	struct SceNetMsghdr msg = {0};
+	memset(&from_addr, 0, sizeof(from_addr));
+	msg.msg_name = &from_addr;
+	msg.msg_namelen = sizeof(from_addr);
+
+	uint32_t msg_recv_buf[sizeof(test_data)] = {0};
+	struct SceNetIovec msg_iov[sizeof(test_data)] = {0};
+	for (int i = 0;i < sizeof(test_data);i++){
+		msg_iov[i].iov_base = &msg_recv_buf[i];
+		msg_iov[i].iov_len = 1;
+	}
+	msg.msg_iov = msg_iov;
+	msg.msg_iovlen = sizeof(test_data);
+
+	recv_status = sceNetInetRecvmsg(sock, (void *)&msg, 0);
+	if (recv_status < 0){
+		LOG("%s: failed receiving as message, 0x%x 0x%x\n", __func__, recv_status, sceNetInetGetErrno());
+		return;
+	}
+	if (from_addr.sin_port != htons(27016)){
+		LOG("%s: bad receive port when receiving as message\n", __func__);
+		return;
+	}
+	if (from_addr.sin_addr.s_addr != sceNetInetInetAddr("127.0.0.1")){
+		LOG("%s: bad receive address when receiving as message\n", __func__);
+		return;
+	}
+	for (int i = 0;i < sizeof(test_data);i++){
+		if (msg_recv_buf[i] != test_data[i]){
+			LOG("%s: bad recevied data when receiving as message\n", __func__);
+			return;
+		}
+	}
+	LOG("%s: udp data received as message\n", __func__);
+
+	sceKernelDelayThread(1000000);
 
 	LOG("%s: sceNetInetClose %d\n", __func__, sock);
 	sceNetInetClose(sock);
