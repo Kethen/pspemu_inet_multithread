@@ -20,7 +20,20 @@ struct errno_slot{
 	uint64_t last_update;
 };
 
+uint32_t nbio_field[8] = {0};
 struct errno_slot errnos[64] = {0};
+
+static int psp_select_fd_is_set(uint32_t *field, int sockfd){
+	return field[sockfd >> 5] & (1 << (sockfd & 0x1f));
+}
+
+static void psp_select_set_fd(uint32_t *field, int sockfd, bool set){
+	if (set) {
+		field[sockfd >> 5] |= 1 << (sockfd & 0x1f);
+	}else{
+		field[sockfd >> 5] &= ~(1 << (sockfd & 0x1f));
+	}
+}
 
 static int extract_result_and_save_errno(uint64_t error_res){
 	int32_t *val = (int32_t *)&error_res;
@@ -56,18 +69,23 @@ static int extract_result_and_save_errno(uint64_t error_res){
 
 int sceNetInetSocketPatched(int domain, int type, int protocol){
 	//LOG("%s: begin\n", __func__);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET, (int64_t)domain, (int64_t)type, (int64_t)protocol);
-	return extract_result_and_save_errno(res);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET, 0, (int64_t)domain, (int64_t)type, (int64_t)protocol);
+
+	int result = extract_result_and_save_errno(res);
+	if (result >= 0){
+		psp_select_set_fd(nbio_field, result, false);
+	}
+	return result;
 }
 
 int sceNetInetBindPatched(int sockfd, void *sockaddr, int addrlen){
 	sceKernelDcacheWritebackInvalidateRange(sockaddr, addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_BIND, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_BIND, 0, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetListenPatched(int sockfd, int backlog){
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_LISTEN, (int64_t)sockfd, (int64_t)backlog);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_LISTEN, 0, (int64_t)sockfd, (int64_t)backlog);
 	return extract_result_and_save_errno(res);
 }
 
@@ -75,54 +93,95 @@ int sceNetInetAcceptPatched(int sockfd, void *sockaddr, void *addrlen){
 	if (addrlen != NULL)
 		sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	if (sockaddr != NULL)
-		sceKernelDcacheInvalidateRange(sockaddr, *(int32_t*)addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_ACCEPT, (int64_t)sockfd, (uint64_t)sockaddr, (uint64_t)addrlen);
+		sceKernelDcacheWritebackInvalidateRange(sockaddr, *(int32_t*)addrlen);
+
+	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
+
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_ACCEPT, nbio, (int64_t)sockfd, (uint64_t)sockaddr, (uint64_t)addrlen);
+
+	if (addrlen != NULL)
+		sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+	if (sockaddr != NULL)
+		sceKernelDcacheWritebackInvalidateRange(sockaddr, *(int32_t*)addrlen);
+
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetConnectPatched(int sockfd, void *sockaddr, int addrlen){
+	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
+
 	sceKernelDcacheWritebackInvalidateRange(sockaddr, addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CONNECT, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CONNECT, nbio, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSetsockoptPatched(int sockfd, int level, int optname, void *optval, int optlen){
 	sceKernelDcacheWritebackInvalidateRange(optval, optlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SETSOCKOPT, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (int64_t)optlen);
-	return extract_result_and_save_errno(res);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SETSOCKOPT, 0, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (int64_t)optlen);
+	int result = extract_result_and_save_errno(res);
+
+	if (result >= 0 && level == 0xffff && optname == 0x1009){
+		int optval_content = 0;
+		if (optlen == 8){
+			optval_content = *(uint8_t*)optval;
+		}else if (optlen == 16){
+			optval_content = *(uint16_t*)optval;
+		}else{
+			optval_content = *(uint32_t*)optval;
+		}
+		psp_select_set_fd(nbio_field, sockfd, optval_content);
+	}
+
+	return result;
 }
 
 int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval, void *optlen){
 	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(optval, *(int32_t*)optlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKOPT, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (uint64_t)optlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKOPT, 0, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (uint64_t)optlen);
+	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
+	sceKernelDcacheWritebackInvalidateRange(optval, *(int32_t*)optlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKNAME, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKNAME, 0, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
+	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETPEERNAME, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETPEERNAME, 0, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
+	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSendPatched(int sockfd, void *buf, int size, int flags){
+	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
+	if (flags & 0x80){
+		nbio = 1;
+	}
+
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SEND, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SEND, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSendtoPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, int addrlen){
+	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
+	if (flags & 0x80){
+		nbio = 1;
+	}
+
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	sceKernelDcacheWritebackInvalidateRange(dest_addr, addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDTO, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (int64_t)addrlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDTO, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (int64_t)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
@@ -143,6 +202,11 @@ struct SceNetMsghdr {
 } SceNetMsghdr;
 
 int sceNetInetSendmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
+	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
+	if (flags & 0x80){
+		nbio = 1;
+	}
+
 	sceKernelDcacheWritebackInvalidateRange(msg, sizeof(SceNetMsghdr));
 	if (msg->msg_name != NULL && msg->msg_namelen != 0){
 		sceKernelDcacheWritebackInvalidateRange(msg->msg_name, msg->msg_namelen);
@@ -152,25 +216,44 @@ int sceNetInetSendmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
 		}
 	}
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDMSG, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDMSG, nbio, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
+	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
+	if (flags & 0x80){
+		nbio = 1;
+	}
+
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECV, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECV, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
+	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, void *addrlen){
+	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
+	if (flags & 0x80){
+		nbio = 1;
+	}
+
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(dest_addr, *(int32_t*)addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVFROM, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (uint64_t)addrlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVFROM, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (uint64_t)addrlen);
+	sceKernelDcacheWritebackInvalidateRange(buf, size);
+	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+	sceKernelDcacheWritebackInvalidateRange(dest_addr, *(int32_t*)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
+	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
+	if (flags & 0x80){
+		nbio = 1;
+	}
+
 	sceKernelDcacheWritebackInvalidateRange(msg, sizeof(SceNetMsghdr));
 	if (msg->msg_name != NULL && msg->msg_namelen != 0){
 		sceKernelDcacheWritebackInvalidateRange(msg->msg_name, msg->msg_namelen);
@@ -180,12 +263,21 @@ int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
 		}
 	}
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVMSG, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVMSG, nbio, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
+	sceKernelDcacheWritebackInvalidateRange(msg, sizeof(SceNetMsghdr));
+	if (msg->msg_name != NULL && msg->msg_namelen != 0){
+		sceKernelDcacheWritebackInvalidateRange(msg->msg_name, msg->msg_namelen);
+	}
+	if (msg->msg_iovlen != 0 && msg->msg_iov != NULL){
+		for(int i = 0;i < msg->msg_iovlen;i++){
+			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
+		}
+	}
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetClosePatched(int sockfd){
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE, (int64_t)sockfd);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE, 0, (int64_t)sockfd);
 	return extract_result_and_save_errno(res);
 }
 
@@ -197,7 +289,8 @@ struct psp_poll_fd{
 
 int sceNetInetPollPatched(struct psp_poll_fd *fds, unsigned int nfds, int timeout){
 	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_POLL, (uint64_t)fds, (uint64_t)nfds, (int64_t)timeout);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_POLL, 0, (uint64_t)fds, (uint64_t)nfds, (int64_t)timeout);
+	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
 	return extract_result_and_save_errno(res);
 }
 
@@ -208,17 +301,23 @@ int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *excep
 		sceKernelDcacheWritebackInvalidateRange(writefds, 256);
 	if (exceptfds != NULL)
 		sceKernelDcacheWritebackInvalidateRange(exceptfds, 256);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SELECT, (int64_t)nfds, (uint64_t)readfds, (uint64_t)writefds, (uint64_t)exceptfds, (uint64_t)timeout);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SELECT, 0, (int64_t)nfds, (uint64_t)readfds, (uint64_t)writefds, (uint64_t)exceptfds, (uint64_t)timeout);
+	if (readfds != NULL)
+		sceKernelDcacheWritebackInvalidateRange(readfds, 256);
+	if (writefds != NULL)
+		sceKernelDcacheWritebackInvalidateRange(writefds, 256);
+	if (exceptfds != NULL)
+		sceKernelDcacheWritebackInvalidateRange(exceptfds, 256);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetCloseWithRSTPatched(int sockfd){
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE_WITH_RST, (int64_t)sockfd);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE_WITH_RST, 0, (int64_t)sockfd);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSocketAbortPatched(int sockfd){
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_ABORT, (int64_t)sockfd);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_ABORT, 0, (int64_t)sockfd);
 	return extract_result_and_save_errno(res);
 }
 

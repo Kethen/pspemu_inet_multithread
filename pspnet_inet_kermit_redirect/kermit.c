@@ -42,7 +42,7 @@ static void free_request_slot(int slot){
 	pspSdkEnableInterrupts(interrupts);
 }
 
-uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, ...){
+uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbio, ...){
 	int slot_idx = reserve_request_slot();
 
 	struct request_slot *slot = &request_slots[slot_idx];
@@ -55,7 +55,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, ...){
 	#endif
 
 	va_list args;
-	va_start(args, num_args);
+	va_start(args, nbio);
 	for (int i = 0;i < num_args;i++){
 		slot->args[i] = va_arg(args, uint64_t);
 		#if LOG_REQUESTS
@@ -85,12 +85,14 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, ...){
 	uint64_t response = 0;
 	sceKermitSendRequest661(request_uncached, mode, cmd, 14, 0, &response);
 
-	sceKernelDelayThread(50000);
+	sceKernelDelayThread(500);
+	sceKernelDcacheWritebackInvalidateRange(&slot->done, sizeof(slot->done));
 	while (!slot->done){
-		sceKernelDcacheInvalidateRange(&slot->done, sizeof(slot->done));
-		sceKernelDelayThread(100000);
+		sceKernelDcacheWritebackInvalidateRange(&slot->done, sizeof(slot->done));
+		sceKernelDelayThread(nbio ? 500 : 50000);
 	}
 
+	sceKernelDcacheWritebackInvalidateRange(&slot->ret, sizeof(slot->ret));
 	pspSdkSetK1(k1);
 
 	uint64_t ret = slot->ret;
