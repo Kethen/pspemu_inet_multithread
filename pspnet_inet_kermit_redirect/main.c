@@ -428,10 +428,12 @@ void rehook_inet(){
 		LOG("%s: hooking adhoc module\n", __func__);
 		replace_functions(&adhoc_module);
 	}
+	#if 1
 	if (adhocctl_module_found){
 		LOG("%s: hooking adhocctl module\n", __func__);
 		replace_functions(&adhocctl_module);
 	}
+	#endif
 	if (upnp_module_found){
 		LOG("%s: hooking upnp module\n", __func__);
 		replace_functions(&upnp_module);

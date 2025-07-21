@@ -124,13 +124,39 @@ int handle_inet_request(SceKermitRequest *request){
 	log_request(request);
 	#endif
 
+	#if 1
+	if (request->cmd == 0x34){
+		// looks like it is for closing all psp sockets
+		int num_active_psp_sockets = 0;
+		sceKernelLockMutex(sockfd_map_mutex, 1, 0);
+		for (int i = 0;i < sizeof(sockfd_map) / sizeof(sockfd_map[0]);i++){
+			if (sockfd_map[i] != -1){
+				num_active_psp_sockets++;
+				int close_status = 0;
+				do{
+					sceNetSocketAbort(sockfd_map[i], 0);
+					close_status = sceNetSocketClose(sockfd_map[i]);
+					if (close_status != 0){
+						LOG("%s: failed closing socket 0x%x, 0x%x\n", __func__, sockfd_map[i], close_status);
+						sceKernelDelayThread(1000);
+					}
+				}while(close_status != 0);
+				sockfd_map[i] = -1;
+			}
+		}
+		sceKernelUnlockMutex(sockfd_map_mutex, 1);
+		LOG("%s: command 0x%x, closed %d active psp socket(s)\n", __func__, request->cmd, num_active_psp_sockets);
+		return 0;
+	}
+	#endif
+
 	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SOCKET_ABORT){
 		char args[256];
 		int offset = 0;
 		for (int i = 0;i < 14;i++){
 			offset += sprintf(&args[offset], "0x%x ", (uint32_t)request->args[i]);
 		}
-		LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
+		//LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
 		return 0;
 	}
 
@@ -230,7 +256,8 @@ static int32_t get_sockfd(int psp_sockfd){
 
 static int32_t map_sockfd(int sockfd){
 	sceKernelLockMutex(sockfd_map_mutex, 1, 0);
-	for (int i = 0;i < sizeof(sockfd_map) / sizeof(int32_t);i++){
+	// https://xkcd.com/3062/ let's... skip sock 0
+	for (int i = 1;i < sizeof(sockfd_map) / sizeof(int32_t);i++){
 		if (sockfd_map[i] == -1){
 			sockfd_map[i] = sockfd;
 			sceKernelUnlockMutex(sockfd_map_mutex, 1);
