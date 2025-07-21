@@ -336,6 +336,10 @@ SceModule2 game_module;
 bool game_module_found = false;
 SceModule2 adhoc_module;
 bool adhoc_module_found = false;
+SceModule2 adhocctl_module;
+bool adhocctl_module_found = false;
+SceModule2 upnp_module;
+bool upnp_module_found = false;
 
 int sceKernelQuerySystemCall(void *function);
 
@@ -348,12 +352,15 @@ static void replace_import(PspModuleImport *import, uint32_t nid, void *function
 	for(int i = 0;i < import->funcCount;i++){
 		if (import->fnids[i] == nid){
 			uint32_t *addr = (uint32_t *)&import->funcs[i * 2];
+
+			int _interrupts = pspSdkDisableInterrupts();
 			uint32_t orig_instructions[2] = {addr[0], addr[1]};
 			addr[0] = 0x03E00008; // jr
 			addr[1] = 0x0000000C | (syscall << 6); //syscall
-			LOG("%s: 0x%x 0x%x -> 0x%x 0x%x (0x%x)\n", __func__, orig_instructions[0], orig_instructions[1], addr[0], addr[1], syscall);
 			sceKernelDcacheWritebackInvalidateRange(addr, 8);
 			sceKernelIcacheInvalidateRange(addr, 8);
+			pspSdkEnableInterrupts(_interrupts);
+			LOG("%s: 0x%x 0x%x -> 0x%x 0x%x (0x%x)\n", __func__, orig_instructions[0], orig_instructions[1], addr[0], addr[1], syscall);
 			return;
 		}
 	}
@@ -415,13 +422,30 @@ static void replace_functions(SceModule2 *mod){
 		#undef REPLACE_FUNCTION
 }
 
+void rehook_inet(){
+	LOG("%s: inet rehook triggered\n", __func__);
+	if (adhoc_module_found){
+		LOG("%s: hooking adhoc module\n", __func__);
+		replace_functions(&adhoc_module);
+	}
+	if (adhocctl_module_found){
+		LOG("%s: hooking adhocctl module\n", __func__);
+		replace_functions(&adhocctl_module);
+	}
+	if (upnp_module_found){
+		LOG("%s: hooking upnp module\n", __func__);
+		replace_functions(&upnp_module);
+	}
+	if (game_module_found){
+		replace_functions(&game_module);
+	}
+}
+
 int apply_patch(SceModule2 *mod){
 	if (mod->text_addr > 0x08800000 && mod->text_addr < 0x08900000 && strcmp("opnssmp", mod->modname) != 0){
 		LOG("%s: guessing this is the game, %s, saving module info for later\n", __func__, mod->modname);
 		game_module = *mod;
 		game_module_found = true;
-
-		replace_functions(&game_module);
 
 		if (last_handler != NULL){
 			return last_handler(mod);
@@ -434,7 +458,27 @@ int apply_patch(SceModule2 *mod){
 		adhoc_module = *mod;
 		adhoc_module_found = true;
 
-		replace_functions(&adhoc_module);
+		if (last_handler != NULL){
+			return last_handler(mod);
+		}
+		return 0;
+	}
+
+	if (strcmp(mod->modname, "sceNetAdhocctl_Library") == 0){
+		LOG("%s: keeping track of adhocctl module in case it is aemu\n", __func__);
+		adhocctl_module = *mod;
+		adhocctl_module_found = true;
+
+		if (last_handler != NULL){
+			return last_handler(mod);
+		}
+		return 0;
+	}
+
+	if (strcmp(mod->modname, "sceNetMiniUPnP") == 0){
+		LOG("%s: keeping track of miniupnc module for aemu\n", __func__);
+		upnp_module = *mod;
+		upnp_module_found = true;
 
 		if (last_handler != NULL){
 			return last_handler(mod);
@@ -443,13 +487,7 @@ int apply_patch(SceModule2 *mod){
 	}
 
 	if (strcmp(mod->modname, "sceNetInet_Library") == 0){
-		if (game_module_found){
-			replace_functions(&game_module);
-		}
-
-		if (adhoc_module_found){
-			replace_functions(&adhoc_module);
-		}
+		rehook_inet();
 	}
 
 	if (last_handler != NULL){

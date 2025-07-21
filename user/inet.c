@@ -130,7 +130,7 @@ int handle_inet_request(SceKermitRequest *request){
 		for (int i = 0;i < 14;i++){
 			offset += sprintf(&args[offset], "0x%x ", (uint32_t)request->args[i]);
 		}
-		//LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
+		LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
 		return 0;
 	}
 

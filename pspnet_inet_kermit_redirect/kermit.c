@@ -82,14 +82,15 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	int k1 = pspSdkSetK1(0);
 	sceKernelDcacheWritebackInvalidateRange(slot, sizeof(struct request_slot));
 
+	asm volatile ("" : : : "memory");
+
 	uint64_t response = 0;
 	sceKermitSendRequest661(request_uncached, mode, cmd, 14, 0, &response);
-
 	sceKernelDelayThread(500);
 	sceKernelDcacheWritebackInvalidateRange(&slot->done, sizeof(slot->done));
 	while (!slot->done){
 		sceKernelDcacheWritebackInvalidateRange(&slot->done, sizeof(slot->done));
-		sceKernelDelayThread(nbio ? 500 : 50000);
+		sceKernelDelayThread(nbio ? 500 : 5000);
 	}
 
 	sceKernelDcacheWritebackInvalidateRange(&slot->ret, sizeof(slot->ret));
