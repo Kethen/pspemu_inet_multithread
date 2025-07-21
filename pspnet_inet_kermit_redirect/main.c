@@ -334,6 +334,8 @@ int sceNetInetGetErrnoPatched(){
 
 SceModule2 game_module;
 bool game_module_found = false;
+SceModule2 adhoc_module;
+bool adhoc_module_found = false;
 
 int sceKernelQuerySystemCall(void *function);
 
@@ -358,31 +360,11 @@ static void replace_import(PspModuleImport *import, uint32_t nid, void *function
 	LOG("%s: nid 0x%x not found\n", __func__, nid);
 }
 
-int apply_patch(SceModule2 *mod){
-	if (mod->text_addr > 0x08800000 && mod->text_addr < 0x08900000 && strcmp("opnssmp", mod->modname) != 0){
-		LOG("%s: guessing this is the game, %s, saving module info for later\n", __func__, mod->modname);
-		game_module = *mod;
-		game_module_found = true;
-
-		if (last_handler != NULL){
-			return last_handler(mod);
-		}
-		return 0;
-	}
-
-	if (strcmp(mod->modname, "sceNetInet_Library") == 0){
-		if (!game_module_found){
-			LOG("%s: game module was not detected, not patching\n", __func__);
-			if (last_handler != NULL){
-				return last_handler(mod);
-			}
-			return 0;
-		}
-
+static void replace_functions(SceModule2 *mod){
 		PspModuleImport *inet_import = NULL;
 		int i = 0;
-		while (i < game_module.stub_size){
-			PspModuleImport *import = (PspModuleImport *)(game_module.stub_top + i);
+		while (i < mod->stub_size){
+			PspModuleImport *import = (PspModuleImport *)(mod->stub_top + i);
 			if (import->name == NULL){
 				i += import->entLen * 4;
 				continue;
@@ -395,11 +377,8 @@ int apply_patch(SceModule2 *mod){
 		}
 
 		if (inet_import == NULL){
-			LOG("%s: game does not seem to import inet, not patching\n", __func__);
-			if (last_handler != NULL){
-				return last_handler(mod);
-			}
-			return 0;
+			LOG("%s: module %s does not seem to import inet, not patching\n", __func__, mod->modname);
+			return;
 		}
 
 		#define STR(s) #s
@@ -434,47 +413,43 @@ int apply_patch(SceModule2 *mod){
 
 		#undef STR
 		#undef REPLACE_FUNCTION
+}
 
-		#if 0
-		#define STR(s) #s
-		#define SEARCH_AND_HIJACK(_name, _nid) \
-			u32 _name##Ref = sctrlHENFindFunction("sceNetInet_Library", "sceNetInet", _nid); \
-			LOG("%s: %s ref 0x%x\n", __func__, STR(_name), _name##Ref); \
-			HIJACK_FUNCTION(_name##Ref, _name##Patched, orig, 1);
+int apply_patch(SceModule2 *mod){
+	if (mod->text_addr > 0x08800000 && mod->text_addr < 0x08900000 && strcmp("opnssmp", mod->modname) != 0){
+		LOG("%s: guessing this is the game, %s, saving module info for later\n", __func__, mod->modname);
+		game_module = *mod;
+		game_module_found = true;
 
-		// socket functions that very likely needs to be wrapped
+		replace_functions(&game_module);
 
-		// discarding the originals for now
-		void *orig;
+		if (last_handler != NULL){
+			return last_handler(mod);
+		}
+		return 0;
+	}
 
-		// mostly standard unix socket
-		SEARCH_AND_HIJACK(sceNetInetSocket, 0x8B7B220F);
-		SEARCH_AND_HIJACK(sceNetInetBind, 0x1A33F9AE);
-		SEARCH_AND_HIJACK(sceNetInetListen, 0xD10A1A7A);
-		SEARCH_AND_HIJACK(sceNetInetAccept, 0xDB094E1B);
-		SEARCH_AND_HIJACK(sceNetInetConnect, 0x410B34AA);
-		SEARCH_AND_HIJACK(sceNetInetSetsockopt, 0x2FE71FE7);
-		SEARCH_AND_HIJACK(sceNetInetGetsockopt, 0x4A114C7C);
-		SEARCH_AND_HIJACK(sceNetInetGetsockname, 0x162E6FD5);
-		SEARCH_AND_HIJACK(sceNetInetGetpeername, 0xE247B6D6);
-		SEARCH_AND_HIJACK(sceNetInetSend, 0x7AA671BC);
-		SEARCH_AND_HIJACK(sceNetInetSendto, 0x05038FC7);
-		SEARCH_AND_HIJACK(sceNetInetSendmsg, 0x774E36F4);
-		SEARCH_AND_HIJACK(sceNetInetRecv, 0xCDA85C99);
-		SEARCH_AND_HIJACK(sceNetInetRecvfrom, 0xC91142E4);
-		SEARCH_AND_HIJACK(sceNetInetRecvmsg, 0xEECE61D2);
-		SEARCH_AND_HIJACK(sceNetInetClose, 0x8D7284EA);
-		SEARCH_AND_HIJACK(sceNetInetPoll, 0xFAABB1DD);
-		SEARCH_AND_HIJACK(sceNetInetSelect, 0x5BE8D595);
+	if (strcmp(mod->modname, "sceNetAdhoc_Library") == 0){
+		LOG("%s: keeping track of adhoc module in case it is aemu\n", __func__);
+		adhoc_module = *mod;
+		adhoc_module_found = true;
 
-		// sony stuffs
-		SEARCH_AND_HIJACK(sceNetInetCloseWithRST, 0x805502DD);
-		SEARCH_AND_HIJACK(sceNetInetSocketAbort, 0x80A21ABD);
-		SEARCH_AND_HIJACK(sceNetInetGetErrno, 0xFBABE411);
+		replace_functions(&adhoc_module);
 
-		#undef STR
-		#undef SEARCH_AND_HIJACK
-		#endif
+		if (last_handler != NULL){
+			return last_handler(mod);
+		}
+		return 0;
+	}
+
+	if (strcmp(mod->modname, "sceNetInet_Library") == 0){
+		if (game_module_found){
+			replace_functions(&game_module);
+		}
+
+		if (adhoc_module_found){
+			replace_functions(&adhoc_module);
+		}
 	}
 
 	if (last_handler != NULL){
