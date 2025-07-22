@@ -126,24 +126,22 @@ int handle_inet_request(SceKermitRequest *request){
 	if (request->cmd == 0x34){
 		// looks like it is for closing all psp sockets
 		int num_active_psp_sockets = 0;
+		int num_close_failure = 0;
 		sceKernelLockMutex(sockfd_map_mutex, 1, 0);
 		for (int i = 0;i < sizeof(sockfd_map) / sizeof(sockfd_map[0]);i++){
 			if (sockfd_map[i] != -1){
 				num_active_psp_sockets++;
-				int close_status = 0;
-				do{
-					sceNetSocketAbort(sockfd_map[i], 0);
-					close_status = sceNetSocketClose(sockfd_map[i]);
-					if (close_status != 0){
-						LOG("%s: failed closing socket 0x%x, 0x%x\n", __func__, sockfd_map[i], close_status);
-						sceKernelDelayThread(1000);
-					}
-				}while(close_status != 0);
+				sceNetSocketAbort(sockfd_map[i], 0);
+				int close_status = sceNetSocketClose(sockfd_map[i]);
+				if (close_status != 0){
+					LOG("%s: failed closing socket 0x%x, 0x%x\n", __func__, sockfd_map[i], close_status);
+					num_close_failure++;
+				}
 				sockfd_map[i] = -1;
 			}
 		}
 		sceKernelUnlockMutex(sockfd_map_mutex, 1);
-		LOG("%s: command 0x%x, closed %d active psp socket(s)\n", __func__, request->cmd, num_active_psp_sockets);
+		LOG("%s: command 0x%x, closed %d active psp socket(s), %d socket(s) refused to close\n", __func__, request->cmd, num_active_psp_sockets, num_close_failure);
 		return 0;
 	}
 	#endif
