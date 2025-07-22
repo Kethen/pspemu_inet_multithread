@@ -300,9 +300,11 @@ static void handle_request(struct request_slot *request){
 				break;
 			}
 			response[1] = psp_sockfd;
+			#if 0
 			if (response[1] >= 0){
 				LOG("%s: created socket 0x%x/0x%x\n", __func__, sockfd, psp_sockfd);
 			}
+			#endif
 
 			break;
 		}
@@ -571,10 +573,12 @@ static void handle_request(struct request_slot *request){
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			response[1] = sceNetSocketClose(sockfd);
+			#if 0
 			if (response[1] >= 0){
 				remove_sockfd(psp_sockfd);
 				LOG("%s: removed socket 0x%x/0x%x\n", __func__, sockfd, psp_sockfd);
 			}
+			#endif
 
 			break;
 		}
