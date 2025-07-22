@@ -69,7 +69,7 @@ static int extract_result_and_save_errno(uint64_t error_res){
 
 int sceNetInetSocketPatched(int domain, int type, int protocol){
 	//LOG("%s: begin\n", __func__);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET, 0, (int64_t)domain, (int64_t)type, (int64_t)protocol);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET, 1, (int64_t)domain, (int64_t)type, (int64_t)protocol);
 
 	int result = extract_result_and_save_errno(res);
 	if (result >= 0){
@@ -80,12 +80,12 @@ int sceNetInetSocketPatched(int domain, int type, int protocol){
 
 int sceNetInetBindPatched(int sockfd, void *sockaddr, int addrlen){
 	sceKernelDcacheWritebackInvalidateRange(sockaddr, addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_BIND, 0, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_BIND, 1, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetListenPatched(int sockfd, int backlog){
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_LISTEN, 0, (int64_t)sockfd, (int64_t)backlog);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_LISTEN, 1, (int64_t)sockfd, (int64_t)backlog);
 	return extract_result_and_save_errno(res);
 }
 
@@ -117,7 +117,7 @@ int sceNetInetConnectPatched(int sockfd, void *sockaddr, int addrlen){
 
 int sceNetInetSetsockoptPatched(int sockfd, int level, int optname, void *optval, int optlen){
 	sceKernelDcacheWritebackInvalidateRange(optval, optlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SETSOCKOPT, 0, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (int64_t)optlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SETSOCKOPT, 1, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (int64_t)optlen);
 	int result = extract_result_and_save_errno(res);
 
 	if (result >= 0 && level == 0xffff && optname == 0x1009){
@@ -138,7 +138,7 @@ int sceNetInetSetsockoptPatched(int sockfd, int level, int optname, void *optval
 int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval, void *optlen){
 	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(optval, *(int32_t*)optlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKOPT, 0, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (uint64_t)optlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKOPT, 1, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (uint64_t)optlen);
 	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(optval, *(int32_t*)optlen);
 	return extract_result_and_save_errno(res);
@@ -147,7 +147,7 @@ int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval
 int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKNAME, 0, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKNAME, 1, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 	return extract_result_and_save_errno(res);
@@ -156,7 +156,7 @@ int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
 int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETPEERNAME, 0, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETPEERNAME, 1, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 	return extract_result_and_save_errno(res);
@@ -277,7 +277,7 @@ int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 }
 
 int sceNetInetClosePatched(int sockfd){
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE, 0, (int64_t)sockfd);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE, 1, (int64_t)sockfd);
 	return extract_result_and_save_errno(res);
 }
 
@@ -312,12 +312,12 @@ int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *excep
 }
 
 int sceNetInetCloseWithRSTPatched(int sockfd){
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE_WITH_RST, 0, (int64_t)sockfd);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE_WITH_RST, 1, (int64_t)sockfd);
 	return extract_result_and_save_errno(res);
 }
 
 int sceNetInetSocketAbortPatched(int sockfd){
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_ABORT, 0, (int64_t)sockfd);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_ABORT, 1, (int64_t)sockfd);
 	return extract_result_and_save_errno(res);
 }
 
