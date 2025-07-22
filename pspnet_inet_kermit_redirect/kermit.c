@@ -71,9 +71,11 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	request_aligned->cmd = cmd;
 
 	request_aligned->args[0] = (uint32_t)slot;
+	#if 0
 	for (int i = 1;i < 14;i++){
 		request_aligned->args[i] = (uint32_t)i;
 	}
+	#endif
 
 	#if LOG_REQUESTS
 	LOG("%s: requesting mode 0x%x cmd 0x%d %s\n", __func__, mode, cmd, args_log);

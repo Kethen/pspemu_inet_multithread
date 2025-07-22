@@ -22,9 +22,7 @@ struct inet_worker{
 };
 
 struct inet_worker workers[16] = {0};
-int num_workers = 0;
-
-static int last_worker_used = 0;
+static int num_workers = 0;
 
 // the vita can do up to 1024 sockets?
 int32_t sockfd_map[255];
@@ -151,18 +149,20 @@ int handle_inet_request(SceKermitRequest *request){
 	#endif
 
 	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SOCKET_ABORT){
+		#if 0
 		char args[256];
 		int offset = 0;
 		for (int i = 0;i < 14;i++){
 			offset += sprintf(&args[offset], "0x%x ", (uint32_t)request->args[i]);
 		}
-		//LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
+		LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
+		#endif
 		return 0;
 	}
 
 	int free_worker = -1;
 	int shortest_queue_worker = -1;
-	for (int i = 0;i < sizeof(workers) / sizeof(struct inet_worker);i++){
+	for (int i = 0;i < num_workers;i++){
 		if (!workers[i].busy){
 			free_worker = i;
 			break;
@@ -191,12 +191,14 @@ int handle_inet_request(SceKermitRequest *request){
 		}
 
 		worker->queue[worker->num_requests] = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_IN, sizeof(struct request_slot));
+		#if 0
 		char args[256];
 		int offset = 0;
 		for (int i = 0;i < 14;i++){
 			offset += sprintf(&args[offset], "0x%x ", *(uint32_t*)&worker->queue[worker->num_requests]->args[i]);
 		}
-		//LOG("%s: queuing request addr 0x%x, 0x%x %s\n", __func__, worker->queue[worker->num_requests], worker->queue[worker->num_requests]->cmd, args);
+		LOG("%s: queuing request addr 0x%x, 0x%x %s\n", __func__, worker->queue[worker->num_requests], worker->queue[worker->num_requests]->cmd, args);
+		#endif
 
 		worker->num_requests++;
 		kermit_respond_request(KERMIT_MODE_WLAN, request, 0);
@@ -836,8 +838,6 @@ static int inet_queue_worker(unsigned int args, void *argp){
 }
 
 int inet_init(){
-	last_worker_used = 0;
-
 	sockfd_map_mutex = sceKernelCreateMutex("inet sockfd remap mutex", 0, 0, NULL);
 	if (sockfd_map_mutex < 0){
 		LOG("%s: failed initializing sockfd map mutex, 0x%x\n", __func__, sockfd_map_mutex);
