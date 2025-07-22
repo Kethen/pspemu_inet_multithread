@@ -1,0 +1,53 @@
+name: Build package
+
+on: [ push, pull_request, workflow_dispatch ]
+
+jobs:
+  build_pkg:
+    runs-on: ubuntu-24.04
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Set env vars
+      run: |
+        echo "sha_name=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV
+        echo "VITASDK=${GITHUB_WORKSPACE}/vitasdk" >> $GITHUB_ENV
+        echo "${GITHUB_WORKSPACE}/vitasdk/bin" >> $GITHUB_PATH
+        echo "PSPDEV=${GITHUB_WORKSPACE}/pspdev" >> $GITHUB_ENV
+        echo "${GITHUB_WORKSPACE}/pspdev/bin" >> $GITHUB_PATH
+
+    - name: Install packages
+      run: |
+        export DEBIAN_FRONTEND=noninteractive; sudo apt update; sudo apt install -y curl make git-core cmake python3 sudo wget bzip2 xz-utils libreadline8 libusb-0.1-4 tmux libmpc3 mono-devel
+        export PATH=$VITASDK/bin:$PATH; git clone https://github.com/vitasdk/vdpm; cd vdpm; ./bootstrap-vitasdk.sh; ./install-all.sh
+        cd ..
+        curl -sL https://github.com/pspdev/pspdev/releases/download/v20250601/pspdev-ubuntu-latest-x86_64.tar.gz | tar xvz -C ./
+
+    - name: Build
+      run: |
+        mkdir -p user_build
+        cd user_build
+        cmake ../user
+        make
+        cp pspemu_inet_multithread.suprx ../
+        cd ..
+        cd pspnet_inet_kermit_redirect
+        make
+        cp pspnet_inet_kermit_redirect.prx ../
+        cd ..
+        cd psp_test
+        make
+        cp EBOOT.PBP ../
+        cd ..
+
+    - name: Push package artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: pspemu_inet_multithread_${{ env.sha_name }}
+        path: |
+           pspemu_inet_multithread.suprx
+           pspnet_inet_kermit_redirect.prx
+           EBOOT.PBP
+        if-no-files-found: error
