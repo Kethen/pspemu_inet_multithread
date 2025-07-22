@@ -280,6 +280,11 @@ static void remove_sockfd(int psp_sockfd){
 	sceKernelUnlockMutex(sockfd_map_mutex, 1);
 }
 
+struct psp_select_timeval{
+	uint32_t tv_sec;
+	uint32_t tv_usec;
+};
+
 static void handle_request(struct request_slot *request){
 	int32_t response[2] = {0};
 
@@ -668,7 +673,7 @@ static void handle_request(struct request_slot *request){
 			uint32_t *readfds = *(uint32_t*)&request->args[1] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[1], KERMIT_ADDR_MODE_INOUT, sizeof(uint32_t) * 8);
 			uint32_t *writefds = *(uint32_t*)&request->args[2] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(uint32_t) * 8);
 			uint32_t *exceptfds = *(uint32_t*)&request->args[3] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[3], KERMIT_ADDR_MODE_INOUT, sizeof(uint32_t) * 8);
-			uint32_t timeout = *(uint32_t *)&request->args[4];
+			struct psp_select_timeval *timeout = *(uint32_t*)&request->args[4] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[4], KERMIT_ADDR_MODE_IN, sizeof(struct psp_select_timeval));
 
 			SceNetEpollEvent events[255] = {0};
 
@@ -724,7 +729,10 @@ static void handle_request(struct request_slot *request){
 				epoll_fds++;
 			}
 
-			uint32_t timeout_usec = timeout * 1000;
+			uint32_t timeout_usec = 0;
+			if (timeout != NULL){
+				timeout_usec = timeout->tv_usec + timeout->tv_sec * 1000000;
+			}
 
 			if (epoll_fds == 0){
 				sceNetEpollDestroy(epollfd);
