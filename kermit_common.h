@@ -44,6 +44,7 @@ typedef enum kermit_wlan_custom_command{
 	KERMIT_INET_SELECT,
 	KERMIT_INET_CLOSE_WITH_RST,
 	KERMIT_INET_SOCKET_ABORT, // 0x14
+	KERMIT_INET_SOCKET_IOCTL,
 }kermit_wlan_custom_command;
 
 #endif

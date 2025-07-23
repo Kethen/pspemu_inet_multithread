@@ -150,6 +150,7 @@ static int get_functions_and_data(SceUID modid){
 	kermit_state_1015C = (void *)(data_addr + 0x1015c);
 	kermit_get_pspemu_addr_from_psp_addr = (void *)(text_addr + 0x6364 + 0x1);
 	kermit_pspemu_writeback_cache = (void *)(text_addr + 0x6490 + 0x1);
+	sceNetSyscallIoctl_import = (void *)(text_addr + 0x729c);
 
 	return 0;
 }

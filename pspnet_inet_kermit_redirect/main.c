@@ -339,6 +339,16 @@ uint32_t sceNetInetGetPspErrorPatched(){
 	return (uint32_t)sceNetInetGetErrnoPatched() | 0x80010000;
 }
 
+// probably some kind of internal ioctl
+uint32_t sceNetInet_lib_AEE60F84_patched(int sockfd, uint32_t command, void *data){
+	if (data != NULL)
+		sceKernelDcacheWritebackInvalidateRange(data, 0x24);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_IOCTL, 1, (int64_t)sockfd, (uint64_t)command, (uint64_t)data);
+	if (data != NULL)
+		sceKernelDcacheWritebackInvalidateRange(data, 0x24);
+	return extract_result_and_save_errno(res);
+}
+
 SceModule2 game_module;
 bool game_module_found = false;
 
@@ -463,6 +473,31 @@ static void replace_import(PspModuleImport *import, uint32_t nid, void *function
 	//LOG("%s: nid 0x%x not found\n", __func__, nid);
 }
 
+static void rewrite_mod_import(SceModule2 *mod, const char *libname, uint32_t nid, void* function){
+	PspModuleImport *lib = NULL;
+	int i = 0;
+	while (i < mod->stub_size){
+		PspModuleImport *import = (PspModuleImport *)(mod->stub_top + i);
+		if (import->name == NULL){
+			i += import->entLen * 4;
+			continue;
+		}
+		if (strcmp(import->name, libname) == 0){
+			lib = import;
+			break;
+		}
+		i += import->entLen * 4;
+	}
+
+
+	if (lib == NULL){
+		//LOG("%s: module %s does not seem to import %s, not patching\n", __func__, mod->modname, libname);
+		return;
+	}
+
+	replace_import(lib, nid, function);
+}
+
 static void replace_functions(SceModule2 *mod){
 		PspModuleImport *inet_import = NULL;
 		int i = 0;
@@ -519,6 +554,12 @@ static void replace_functions(SceModule2 *mod){
 
 		#undef STR
 		#undef REPLACE_FUNCTION
+
+		rewrite_mod_import(mod, "sceNetInet_lib", 0xAEE60F84, sceNetInet_lib_AEE60F84_patched);
+}
+
+void rehook_inet_disabled(){
+	return;
 }
 
 void rehook_inet(){
@@ -609,31 +650,6 @@ static void hookUtilityLoadNetModule(){
 		return;
 	}
 	HIJACK_FUNCTION(func, sceUtilityLoadNetModulePatched, sceUtilityLoadNetModuleOrig, 0);
-}
-
-static void rewrite_mod_import(SceModule2 *mod, const char *libname, uint32_t nid, void* function){
-	PspModuleImport *lib = NULL;
-	int i = 0;
-	while (i < mod->stub_size){
-		PspModuleImport *import = (PspModuleImport *)(mod->stub_top + i);
-		if (import->name == NULL){
-			i += import->entLen * 4;
-			continue;
-		}
-		if (strcmp(import->name, libname) == 0){
-			lib = import;
-			break;
-		}
-		i += import->entLen * 4;
-	}
-
-
-	if (lib == NULL){
-		//LOG("%s: module %s does not seem to import %s, not patching\n", __func__, mod->modname, libname);
-		return;
-	}
-
-	replace_import(lib, nid, function);
 }
 
 int (*sceKernelStartModuleOrig)(SceUID modid, SceSize argsize, void *argp, int *status, SceKernelSMOption *option) = sceKernelStartModule;

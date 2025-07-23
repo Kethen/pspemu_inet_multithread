@@ -146,8 +146,8 @@ int handle_inet_request(SceKermitRequest *request){
 	}
 	#endif
 
-	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SOCKET_ABORT){
-		#if 0
+	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SOCKET_IOCTL){
+		#if 1
 		char args[256];
 		int offset = 0;
 		for (int i = 0;i < 14;i++){
@@ -285,6 +285,8 @@ struct psp_select_timeval{
 	uint32_t tv_usec;
 };
 
+int (*sceNetSyscallIoctl_import)(int sockfd, uint32_t command, void *data) = NULL;
+
 static void handle_request(struct request_slot *request){
 	int32_t response[2] = {0};
 
@@ -313,7 +315,7 @@ static void handle_request(struct request_slot *request){
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			SceNetSockaddrIn *psp_addr = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, sizeof(SceNetSockaddrIn));
 			SceNetSockaddrIn addr = {0};
-			addr.sin_len = psp_addr->sin_len;
+			addr.sin_len = sizeof(addr);
 			addr.sin_family = SCE_NET_AF_INET;
 			addr.sin_port = psp_addr->sin_port;
 			addr.sin_vport = psp_addr->sin_vport;
@@ -367,7 +369,7 @@ static void handle_request(struct request_slot *request){
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			SceNetSockaddrIn *psp_addr = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, sizeof(SceNetSockaddrIn));
 			SceNetSockaddrIn addr = {0};
-			addr.sin_len = psp_addr->sin_len;
+			addr.sin_len = sizeof(addr);
 			addr.sin_family = SCE_NET_AF_INET;
 			addr.sin_port = psp_addr->sin_port;
 			addr.sin_vport = psp_addr->sin_vport;
@@ -391,6 +393,13 @@ static void handle_request(struct request_slot *request){
 			translate_sockopt(psp_level, psp_optname, &level, &optname);
 			int32_t optlen = *(int32_t *)&request->args[4];
 			void *optval = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[3], KERMIT_ADDR_MODE_IN, optlen);
+
+			if (level == SCE_NET_SOL_SOCKET && (optname == SCE_NET_SO_USECRYPTO || optname == SCE_NET_SO_USESIGNATURE)){
+				LOG("%s: blocking cryptography 0x%x on p2p vsock 0x%x/0x%x\n", __func__, optname, sockfd, psp_sockfd);
+				response[1] = 0;
+				break;
+			}
+
 			response[1] = sceNetSetsockopt(sockfd, level, optname, optval, optlen);
 
 			#if 1
@@ -469,6 +478,8 @@ static void handle_request(struct request_slot *request){
 			uint32_t size = *(uint32_t *)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			response[1] = sceNetSend(sockfd, buf, size, flags);
 
 			break;
@@ -479,9 +490,11 @@ static void handle_request(struct request_slot *request){
 			uint32_t size = *(uint32_t *)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			SceNetSockaddrIn *psp_addr = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_IN, sizeof(SceNetSockaddrIn));
 			SceNetSockaddrIn addr = {0};
-			addr.sin_len = psp_addr->sin_len;
+			addr.sin_len = sizeof(addr);
 			addr.sin_family = SCE_NET_AF_INET;
 			addr.sin_port = psp_addr->sin_port;
 			addr.sin_vport = psp_addr->sin_vport;
@@ -498,7 +511,7 @@ static void handle_request(struct request_slot *request){
 			SceNetSockaddrIn addr = {0};
 			if (psp_msg->msg_name != NULL && psp_msg->msg_namelen != 0){
 				SceNetSockaddrIn *psp_addr = kermit_get_pspemu_addr_from_psp_addr((uint32_t)psp_msg->msg_name, KERMIT_ADDR_MODE_IN, sizeof(SceNetSockaddrIn));
-				addr.sin_len = psp_addr->sin_len;
+				addr.sin_len = sizeof(addr);
 				addr.sin_family = SCE_NET_AF_INET;
 				addr.sin_port = psp_addr->sin_port;
 				addr.sin_vport = psp_addr->sin_vport;
@@ -527,6 +540,8 @@ static void handle_request(struct request_slot *request){
 			}
 			// ignore msg_control for now
 			int32_t flags = *(int32_t *)&request->args[2];
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			response[1] = sceNetSendmsg(sockfd, &msg, flags);
 
 			break;
@@ -537,6 +552,8 @@ static void handle_request(struct request_slot *request){
 			uint32_t size = *(uint32_t*)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			response[1] = sceNetRecv(sockfd, buf, size, flags);
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(buf, size);
@@ -550,6 +567,8 @@ static void handle_request(struct request_slot *request){
 			uint32_t size = *(uint32_t*)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			int32_t *addrlen_in_out = request->args[5] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[5], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			SceNetSockaddrIn *addr_out = request->args[4] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_OUT, *addrlen_in_out);
 			response[1] = sceNetRecvfrom(sockfd, buf, size, flags, (void *)addr_out, addrlen_in_out);
@@ -593,6 +612,8 @@ static void handle_request(struct request_slot *request){
 			}
 			// ignore msg_control for now
 			int32_t flags = *(int32_t *)&request->args[2];
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			response[1] = sceNetRecvmsg(sockfd, &msg, flags);
 			if (response[1] >= 0){
 				if (psp_msg->msg_name != NULL && psp_msg->msg_namelen != 0){
@@ -815,6 +836,29 @@ static void handle_request(struct request_slot *request){
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			response[1] = sceNetSocketAbort(sockfd, 0);
+
+			break;
+		}
+		case KERMIT_INET_SOCKET_IOCTL:{
+			int32_t psp_sockfd = *(int32_t*)&request->args[0];
+			int32_t sockfd = get_sockfd(psp_sockfd);
+			uint32_t command = *(uint32_t*)&request->args[1];
+			void *data = request->args[2] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[2], KERMIT_ADDR_MODE_INOUT, 0x24);
+
+			{
+				LOG("%s: blocked ioctl 0x%x/0x%x 0x%x 0x%x/0x%x\n", __func__, sockfd, psp_sockfd, command, data, *(uint32_t*)&request->args[2]);
+				response[1] = 0;
+				break;
+			}
+
+			response[1] = sceNetSyscallIoctl_import(sockfd, command, data);
+			if (response[1] >= 0){
+				kermit_pspemu_writeback_cache(data, 0x24);
+			}
+
+			#if 1
+			LOG("%s: ioctl 0x%x/0x%x 0x%x 0x%x/0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, command, data, *(uint32_t*)&request->args[2], response[1]);
+			#endif
 
 			break;
 		}
