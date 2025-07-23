@@ -300,9 +300,9 @@ static void handle_request(struct request_slot *request){
 				break;
 			}
 			response[1] = psp_sockfd;
-			#if 0
+			#if 1
 			if (response[1] >= 0){
-				LOG("%s: created socket 0x%x/0x%x\n", __func__, sockfd, psp_sockfd);
+				LOG("%s: created socket 0x%x/0x%x with type 0x%x\n", __func__, sockfd, psp_sockfd, type);
 			}
 			#endif
 
@@ -316,8 +316,12 @@ static void handle_request(struct request_slot *request){
 			addr.sin_len = psp_addr->sin_len;
 			addr.sin_family = SCE_NET_AF_INET;
 			addr.sin_port = psp_addr->sin_port;
+			addr.sin_vport = psp_addr->sin_vport;
 			addr.sin_addr.s_addr = psp_addr->sin_addr.s_addr;
 			response[1] = sceNetBind(sockfd, (void *)&addr, sizeof(SceNetSockaddrIn));
+			#if 1
+			LOG("%s: bind 0x%x/0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, addr.sin_addr.s_addr, sceNetNtohs(addr.sin_port), sceNetNtohs(addr.sin_vport), response[1]);
+			#endif
 
 			break;
 		}
@@ -352,6 +356,10 @@ static void handle_request(struct request_slot *request){
 			if (addrlen_in_out != NULL)
 				kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(int32_t));
 
+			#if 1
+			LOG("%s: accept 0x%x/0x%x -> 0x%x/0x%x from 0x%x %d (%d)\n", __func__, sockfd, psp_sockfd, accept_sockfd, psp_accept_sockfd, addr_out->sin_addr.s_addr, sceNetNtohs(addr_out->sin_port), sceNetNtohs(addr_out->sin_vport));
+			#endif
+
 			break;
 		}
 		case KERMIT_INET_CONNECT:{
@@ -362,9 +370,14 @@ static void handle_request(struct request_slot *request){
 			addr.sin_len = psp_addr->sin_len;
 			addr.sin_family = SCE_NET_AF_INET;
 			addr.sin_port = psp_addr->sin_port;
+			addr.sin_vport = psp_addr->sin_vport;
 			addr.sin_addr.s_addr = psp_addr->sin_addr.s_addr;
 			int32_t addrlen = *(int32_t*)&request->args[2];
 			response[1] = sceNetConnect(sockfd, (void *)&addr, addrlen);
+
+			#if 1
+			LOG("%s: connect 0x%x/0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, addr.sin_addr.s_addr, sceNetNtohs(addr.sin_port), sceNetNtohs(addr.sin_vport), response[1]);
+			#endif
 
 			break;
 		}
@@ -379,6 +392,18 @@ static void handle_request(struct request_slot *request){
 			int32_t optlen = *(int32_t *)&request->args[4];
 			void *optval = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[3], KERMIT_ADDR_MODE_IN, optlen);
 			response[1] = sceNetSetsockopt(sockfd, level, optname, optval, optlen);
+
+			#if 1
+			int32_t optval_log = 0;
+			if (optlen == 1){
+				optval_log = *(int8_t*)optval;
+			}
+			if (optlen == 2){
+				optval_log = *(int16_t*)optval;
+			}
+			optval_log = *(int32_t*)optval;
+			LOG("%s: setsockopt 0x%x/0x%x 0x%x/0x%x 0x%x/0x%x %d %d, 0x%x\n", __func__, sockfd, psp_sockfd, level, psp_level, optname, psp_optname, optval_log, optlen, response[1]);
+			#endif
 
 			break;
 		}
@@ -397,6 +422,18 @@ static void handle_request(struct request_slot *request){
 				kermit_pspemu_writeback_cache(optlen_in_out, sizeof(int32_t));
 				kermit_pspemu_writeback_cache(optval_out, *optlen_in_out);
 			}
+
+			#if 1
+			int32_t optval_log = 0;
+			if (*optlen_in_out == 1){
+				optval_log = *(int8_t*)optval_out;
+			}
+			if (*optlen_in_out == 2){
+				optval_log = *(int16_t*)optval_out;
+			}
+			optval_log = *(int32_t*)optval_out;
+			LOG("%s: getsockopt 0x%x/0x%x 0x%x/0x%x 0x%x/0x%x %d %d, 0x%x\n", __func__, sockfd, psp_sockfd, level, psp_level, optname, psp_optname, optval_log, *optlen_in_out, response[1]);
+			#endif
 
 			break;
 		}
@@ -447,6 +484,7 @@ static void handle_request(struct request_slot *request){
 			addr.sin_len = psp_addr->sin_len;
 			addr.sin_family = SCE_NET_AF_INET;
 			addr.sin_port = psp_addr->sin_port;
+			addr.sin_vport = psp_addr->sin_vport;
 			addr.sin_addr.s_addr = psp_addr->sin_addr.s_addr;
 			response[1] = sceNetSendto(sockfd, buf, size, flags, (void *)&addr, sizeof(SceNetSockaddrIn));
 
@@ -463,6 +501,7 @@ static void handle_request(struct request_slot *request){
 				addr.sin_len = psp_addr->sin_len;
 				addr.sin_family = SCE_NET_AF_INET;
 				addr.sin_port = psp_addr->sin_port;
+				addr.sin_vport = psp_addr->sin_vport;
 				addr.sin_addr.s_addr = psp_addr->sin_addr.s_addr;
 				msg.msg_name = &addr;
 				msg.msg_namelen = sizeof(SceNetSockaddrIn);
@@ -573,7 +612,7 @@ static void handle_request(struct request_slot *request){
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			response[1] = sceNetSocketClose(sockfd);
-			#if 0
+			#if 1
 			if (response[1] >= 0){
 				remove_sockfd(psp_sockfd);
 				LOG("%s: removed socket 0x%x/0x%x\n", __func__, sockfd, psp_sockfd);

@@ -1,6 +1,8 @@
 #include <pspsdk.h>
 #include <psputilsforkernel.h>
 #include <pspthreadman.h>
+#include <psputility_modules.h>
+#include <psputility_netmodules.h>
 
 #include <string.h>
 #include <stdbool.h>
@@ -332,21 +334,115 @@ int sceNetInetGetErrnoPatched(){
 	return 0;
 }
 
+uint32_t sceNetInetGetPspErrorPatched(){
+	// there might be exceptions, but do this for now
+	return (uint32_t)sceNetInetGetErrnoPatched() | 0x80010000;
+}
+
 SceModule2 game_module;
 bool game_module_found = false;
-SceModule2 adhoc_module;
-bool adhoc_module_found = false;
-SceModule2 adhocctl_module;
-bool adhocctl_module_found = false;
-SceModule2 upnp_module;
-bool upnp_module_found = false;
+
+struct tracked_module{
+	SceModule2 mod;
+	const char *name;
+	bool found;
+};
+
+struct tracked_module tracked_modules[] = {
+	{
+		.mod = {0},
+		.name = "sceNetAdhoc_Library",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceNetAdhocctl_Library",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceNetMiniUPnP",
+		.found = false
+	},
+	#if 1
+	{
+		.mod = {0},
+		.name = "sceNpMatching2",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceSsl_Module",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "SceHttp_Library",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceDNAS_Library",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceNetResolver_Library",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceNetUpnp_Library",
+		.found = false
+	}
+	#endif
+};
+
+static void track_module(SceModule2 *mod){
+	for (int i = 0;i < sizeof(tracked_modules) / sizeof(tracked_modules[0]);i++){
+		if (strcmp(mod->modname, tracked_modules[i].name) == 0){
+			LOG("%s: keeping track of %s\n", __func__, tracked_modules[i].name);
+			tracked_modules[i].mod = *mod;
+			tracked_modules[i].found = true;
+			break;
+		}
+	}
+}
 
 int sceKernelQuerySystemCall(void *function);
 
-static void replace_import(PspModuleImport *import, uint32_t nid, void *function){
+struct syscall_cache_entry{
+	void *function;
+	int syscall;
+};
+
+// it's not a given that we get to call sceKernelQuerySystemCall in hooks
+struct syscall_cache_entry syscall_cache[64] = {0};
+
+static int get_syscall_cached(void *function){
+	for(int i = 0;i < sizeof(syscall_cache) / sizeof(syscall_cache[0]);i++){
+		if (syscall_cache[i].function == function){
+			return syscall_cache[i].syscall;
+		}
+	}
 	int syscall = sceKernelQuerySystemCall(function);
 	if (syscall < 0){
-		LOG("%s: bad syscall, fix the export on nid 0x%x\n", __func__, nid);
+		return syscall;
+	}
+	for(int i = 0;i < sizeof(syscall_cache) / sizeof(syscall_cache[0]);i++){
+		if (syscall_cache[i].function == 0){
+			syscall_cache[i].function = function;
+			syscall_cache[i].syscall = syscall;
+			return syscall;
+		}
+	}
+	return syscall;
+}
+
+static void replace_import(PspModuleImport *import, uint32_t nid, void *function){
+	int syscall = get_syscall_cached(function);
+	if (syscall < 0){
+		//LOG("%s: bad syscall, fix the export for nid 0x%x\n", __func__, nid);
 		return;
 	}
 	for(int i = 0;i < import->funcCount;i++){
@@ -360,11 +456,11 @@ static void replace_import(PspModuleImport *import, uint32_t nid, void *function
 			sceKernelDcacheWritebackInvalidateRange(addr, 8);
 			sceKernelIcacheInvalidateRange(addr, 8);
 			pspSdkEnableInterrupts(_interrupts);
-			LOG("%s: 0x%x 0x%x -> 0x%x 0x%x (0x%x)\n", __func__, orig_instructions[0], orig_instructions[1], addr[0], addr[1], syscall);
+			//LOG("%s: 0x%x 0x%x -> 0x%x 0x%x (0x%x)\n", __func__, orig_instructions[0], orig_instructions[1], addr[0], addr[1], syscall);
 			return;
 		}
 	}
-	LOG("%s: nid 0x%x not found\n", __func__, nid);
+	//LOG("%s: nid 0x%x not found\n", __func__, nid);
 }
 
 static void replace_functions(SceModule2 *mod){
@@ -384,14 +480,16 @@ static void replace_functions(SceModule2 *mod){
 		}
 
 		if (inet_import == NULL){
-			LOG("%s: module %s does not seem to import inet, not patching\n", __func__, mod->modname);
+			//LOG("%s: module %s does not seem to import inet, not patching\n", __func__, mod->modname);
 			return;
 		}
 
 		#define STR(s) #s
 		#define REPLACE_FUNCTION(_name, _nid) \
-			LOG("%s: replacing %s\n", __func__, STR(_name)); \
 			replace_import(inet_import, _nid, _name##Patched);
+
+			//LOG("%s: replacing %s\n", __func__, STR(_name)); \
+
 
 		// mostly standard unix socket
 		REPLACE_FUNCTION(sceNetInetSocket, 0x8B7B220F);
@@ -417,30 +515,160 @@ static void replace_functions(SceModule2 *mod){
 		REPLACE_FUNCTION(sceNetInetCloseWithRST, 0x805502DD);
 		REPLACE_FUNCTION(sceNetInetSocketAbort, 0x80A21ABD);
 		REPLACE_FUNCTION(sceNetInetGetErrno, 0xFBABE411);
+		REPLACE_FUNCTION(sceNetInetGetPspError, 0x8CA3A97E);
 
 		#undef STR
 		#undef REPLACE_FUNCTION
 }
 
 void rehook_inet(){
-	LOG("%s: inet rehook triggered\n", __func__);
-	if (adhoc_module_found){
-		LOG("%s: hooking adhoc module\n", __func__);
-		replace_functions(&adhoc_module);
-	}
-	#if 1
-	if (adhocctl_module_found){
-		LOG("%s: hooking adhocctl module\n", __func__);
-		replace_functions(&adhocctl_module);
-	}
-	#endif
-	if (upnp_module_found){
-		LOG("%s: hooking upnp module\n", __func__);
-		replace_functions(&upnp_module);
-	}
+	//LOG("%s: inet rehook triggered\n", __func__);
 	if (game_module_found){
 		replace_functions(&game_module);
 	}
+
+	for (int i = 0;i < sizeof(tracked_modules) / sizeof(tracked_modules[0]);i++){
+		if (!tracked_modules[i].found){
+			continue;
+		}
+		SceKernelModuleInfo info = {0};
+		info.size = sizeof(SceKernelModuleInfo);
+		uint32_t k1 = pspSdkSetK1(0);
+		int query_status = sceKernelQueryModuleInfo(tracked_modules[i].mod.modid, &info);
+		pspSdkSetK1(k1);
+		if (query_status < 0){
+			//LOG("%s: cannot query module info for %s, setting module to not found, 0x%x\n", __func__, tracked_modules[i].name, query_status);
+			tracked_modules[i].found = false;
+			continue;
+		}
+		if (strcmp(tracked_modules[i].name, info.name) != 0){
+			//LOG("%s: modid 0x%x has name %s instead of %s, setting module to not found\n", __func__, info.name, tracked_modules[i].name);
+			tracked_modules[i].found = false;
+			continue;
+		}
+		//LOG("%s: hooking %s\n", __func__, tracked_modules[i].name);
+		replace_functions(&tracked_modules[i].mod);
+	}
+}
+
+static int (*sceUtilityLoadModuleOrig)(int modname) = sceUtilityLoadModule;
+int sceUtilityLoadModulePatched(int modname){
+	int ret = sceUtilityLoadModuleOrig(modname);
+	LOG("%s: loaded module 0x%x, 0x%x\n", __func__, modname, ret);
+	if (ret == 0){
+		switch(modname){
+			case PSP_MODULE_NP_MATCHING2:
+				LOG("%s: PSP_MODULE_NP_MATCHING2 loaded, triggering rehook\n", __func__);
+				rehook_inet();
+				break;
+			case PSP_MODULE_NET_HTTP:
+				LOG("%s: PSP_MODULE_NET_HTTP loaded, triggering rehook\n", __func__);
+				rehook_inet();
+				break;
+			case PSP_MODULE_NET_SSL:
+				LOG("%s: PSP_MODULE_NET_SSL loaded, triggering rehook\n", __func__);
+				rehook_inet();
+				break;
+		}
+	}
+	return ret;
+}
+
+int (*sceUtilityLoadNetModuleOrig)(int modname) = sceUtilityLoadNetModule;
+int sceUtilityLoadNetModulePatched(int modname){
+	int ret = sceUtilityLoadNetModuleOrig(modname);
+	LOG("%s: loaded net module 0x%x, 0x%x\n", __func__, modname, ret);
+	if (ret == 0){
+		switch(modname){
+			case PSP_NET_MODULE_HTTP:
+				LOG("%s: PSP_NET_MODULE_HTTP loaded, triggering rehook\n", __func__);
+				rehook_inet();
+				break;
+			case PSP_NET_MODULE_SSL:
+				LOG("%s: PSP_NET_MODULE_SSL loaded, triggering rehook\n", __func__);
+				rehook_inet();
+				break;
+		}
+	}
+	return ret;
+}
+
+static void hookUtilityLoadModule(){
+	u32 func = sctrlHENFindFunction("sceUtility_Driver", "sceUtility", 0x2A2B3DE0);
+	if (func == NULL){
+		LOG("%s: sceUtilityLoadModule not found, not hooking\n", __func__);
+		return;
+	}
+	HIJACK_FUNCTION(func, sceUtilityLoadModulePatched, sceUtilityLoadModuleOrig, 0);
+}
+
+static void hookUtilityLoadNetModule(){
+	u32 func = sctrlHENFindFunction("sceUtility_Driver", "sceUtility", 0x1579a159);
+	if (func == NULL){
+		LOG("%s: sceUtilityLoadNetModule not found, not hooking\n", __func__);
+		return;
+	}
+	HIJACK_FUNCTION(func, sceUtilityLoadNetModulePatched, sceUtilityLoadNetModuleOrig, 0);
+}
+
+static void rewrite_mod_import(SceModule2 *mod, const char *libname, uint32_t nid, void* function){
+	PspModuleImport *lib = NULL;
+	int i = 0;
+	while (i < mod->stub_size){
+		PspModuleImport *import = (PspModuleImport *)(mod->stub_top + i);
+		if (import->name == NULL){
+			i += import->entLen * 4;
+			continue;
+		}
+		if (strcmp(import->name, libname) == 0){
+			lib = import;
+			break;
+		}
+		i += import->entLen * 4;
+	}
+
+
+	if (lib == NULL){
+		//LOG("%s: module %s does not seem to import %s, not patching\n", __func__, mod->modname, libname);
+		return;
+	}
+
+	replace_import(lib, nid, function);
+}
+
+int (*sceKernelStartModuleOrig)(SceUID modid, SceSize argsize, void *argp, int *status, SceKernelSMOption *option) = sceKernelStartModule;
+int sceKernelStartModulePatched(SceUID modid, SceSize argsize, void *argp, int *status, SceKernelSMOption *option){
+	int ret = sceKernelStartModuleOrig(modid, argsize, argp, status, option);
+	if (ret < 0){
+		return ret;
+	}
+	SceKernelModuleInfo info = {0};
+	info.size = sizeof(SceKernelModuleInfo);
+	uint32_t k1 = pspSdkSetK1(0);
+	int query_status = sceKernelQueryModuleInfo(modid, &info);
+	pspSdkSetK1(k1);
+	if (query_status < 0){
+		//LOG("%s: failed fetching info for modid %d\n", __func__, modid);
+		return ret;
+	}
+	for (int i = 0;i < sizeof(tracked_modules) / sizeof(tracked_modules[0]);i++){
+		if (strcmp(info.name, tracked_modules[i].name) == 0){
+			//LOG("%s: %s was started, trigger rehook\n", __func__, tracked_modules[i].name);
+			rehook_inet();
+			break;
+		}
+	}
+	return ret;
+}
+
+
+static void hookKernelStartModule(){
+	u32 func = sctrlHENFindFunction("sceModuleManager", "ModuleMgrForUser", 0x50F0C1EC);
+	if (func == NULL){
+		LOG("%s: sceKernelStartModule not found, not hooking\n", __func__);
+		return;
+	}
+	HIJACK_FUNCTION(func, sceKernelStartModulePatched, sceKernelStartModuleOrig, 0);
 }
 
 int apply_patch(SceModule2 *mod){
@@ -449,27 +677,20 @@ int apply_patch(SceModule2 *mod){
 		game_module = *mod;
 		game_module_found = true;
 
-		if (last_handler != NULL){
-			return last_handler(mod);
+		// need to fight stargate, OR adrenaline for this one
+		int has_stargate = sctrlHENFindFunction("stargate", "stargate", 0x325FE63A) || sctrlHENFindFunction("Stargate", "stargate", 0x325FE63A);
+
+		#if 0
+		if (has_stargate){
+			// ARK standalone
+			hookUtilityLoadModule();
+		}else{
+			// Adrenaline
+			rewrite_mod_import(mod, "sceUtility", 0x2A2B3DE0, sceUtilityLoadModulePatched);
 		}
-		return 0;
-	}
-
-	if (strcmp(mod->modname, "sceNetAdhoc_Library") == 0){
-		LOG("%s: keeping track of adhoc module in case it is aemu\n", __func__);
-		adhoc_module = *mod;
-		adhoc_module_found = true;
-
-		if (last_handler != NULL){
-			return last_handler(mod);
-		}
-		return 0;
-	}
-
-	if (strcmp(mod->modname, "sceNetAdhocctl_Library") == 0){
-		LOG("%s: keeping track of adhocctl module in case it is aemu\n", __func__);
-		adhocctl_module = *mod;
-		adhocctl_module_found = true;
+		hookUtilityLoadNetModule();
+		#endif
+		hookKernelStartModule();
 
 		if (last_handler != NULL){
 			return last_handler(mod);
@@ -477,18 +698,10 @@ int apply_patch(SceModule2 *mod){
 		return 0;
 	}
 
-	if (strcmp(mod->modname, "sceNetMiniUPnP") == 0){
-		LOG("%s: keeping track of miniupnc module for aemu\n", __func__);
-		upnp_module = *mod;
-		upnp_module_found = true;
-
-		if (last_handler != NULL){
-			return last_handler(mod);
-		}
-		return 0;
-	}
+	track_module(mod);
 
 	if (strcmp(mod->modname, "sceNetInet_Library") == 0){
+		LOG("%s: inet is being loaded, trigger rehook\n", __func__);
 		rehook_inet();
 	}
 
@@ -497,6 +710,8 @@ int apply_patch(SceModule2 *mod){
 	}
 	return 0;
 }
+
+
 
 int module_start(SceSize args, void * argp){
 	INIT_LOG();
