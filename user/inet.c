@@ -885,24 +885,22 @@ static void handle_request(struct request_slot *request){
 				break;
 			}
 
-			if (response[1] != 0){
-				for (int i = 0;i < response[1];i++){
-					if (events[i].events & SCE_NET_EPOLLIN && readfds != NULL){
-						psp_select_set_fd(readfds, events[i].data.fd, true);
-					}
-					if (events[i].events & SCE_NET_EPOLLOUT && writefds != NULL){
-						psp_select_set_fd(writefds, events[i].data.fd, true);
-					}
-
-					#if LOG_CMD
-					if (events[i].events & SCE_NET_EPOLLIN){
-						readfds_out_log_offset += sprintf(&readfds_out_log[readfds_out_log_offset], "0x%x ", events[i].data.fd);
-					}
-					if (events[i].events & SCE_NET_EPOLLOUT){
-						writefds_out_log_offset += sprintf(&writefds_out_log[writefds_out_log_offset], "0x%x ", events[i].data.fd);
-					}
-					#endif
+			for (int i = 0;i < response[1];i++){
+				if (events[i].events & SCE_NET_EPOLLIN && readfds != NULL){
+					psp_select_set_fd(readfds, events[i].data.fd, true);
 				}
+				if (events[i].events & SCE_NET_EPOLLOUT && writefds != NULL){
+					psp_select_set_fd(writefds, events[i].data.fd, true);
+				}
+
+				#if LOG_CMD
+				if (events[i].events & SCE_NET_EPOLLIN){
+					readfds_out_log_offset += sprintf(&readfds_out_log[readfds_out_log_offset], "0x%x ", events[i].data.fd);
+				}
+				if (events[i].events & SCE_NET_EPOLLOUT){
+					writefds_out_log_offset += sprintf(&writefds_out_log[writefds_out_log_offset], "0x%x ", events[i].data.fd);
+				}
+				#endif
 			}
 
 			if (readfds != NULL)

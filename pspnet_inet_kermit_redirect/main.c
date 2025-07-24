@@ -25,6 +25,69 @@ struct errno_slot{
 uint32_t nbio_field[8] = {0};
 struct errno_slot errnos[64] = {0};
 
+SceModule2 game_module;
+bool game_module_found = false;
+
+struct tracked_module{
+	SceModule2 mod;
+	const char *name;
+	bool found;
+};
+
+struct tracked_module tracked_modules[] = {
+	{
+		.mod = {0},
+		.name = "sceNetAdhoc_Library",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceNetAdhocctl_Library",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceNetMiniUPnP",
+		.found = false
+	},
+
+	#if 1
+	{
+		.mod = {0},
+		.name = "sceNpMatching2",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceSsl_Module",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "SceHttp_Library",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceDNAS_Library",
+		.found = false
+	},
+	#endif
+
+	#if 1
+	{
+		.mod = {0},
+		.name = "sceNetResolver_Library",
+		.found = false
+	},
+	{
+		.mod = {0},
+		.name = "sceNetUpnp_Library",
+		.found = false
+	}
+	#endif
+};
+
 static int psp_select_fd_is_set(uint32_t *field, int sockfd){
 	return field[sockfd >> 5] & (1 << (sockfd & 0x1f));
 }
@@ -348,65 +411,6 @@ uint32_t sceNetInet_lib_AEE60F84_patched(int sockfd, uint32_t command, void *dat
 		sceKernelDcacheWritebackInvalidateRange(data, 0x24);
 	return extract_result_and_save_errno(res);
 }
-
-SceModule2 game_module;
-bool game_module_found = false;
-
-struct tracked_module{
-	SceModule2 mod;
-	const char *name;
-	bool found;
-};
-
-struct tracked_module tracked_modules[] = {
-	{
-		.mod = {0},
-		.name = "sceNetAdhoc_Library",
-		.found = false
-	},
-	{
-		.mod = {0},
-		.name = "sceNetAdhocctl_Library",
-		.found = false
-	},
-	{
-		.mod = {0},
-		.name = "sceNetMiniUPnP",
-		.found = false
-	},
-	#if 1
-	{
-		.mod = {0},
-		.name = "sceNpMatching2",
-		.found = false
-	},
-	{
-		.mod = {0},
-		.name = "sceSsl_Module",
-		.found = false
-	},
-	{
-		.mod = {0},
-		.name = "SceHttp_Library",
-		.found = false
-	},
-	{
-		.mod = {0},
-		.name = "sceDNAS_Library",
-		.found = false
-	},
-	{
-		.mod = {0},
-		.name = "sceNetResolver_Library",
-		.found = false
-	},
-	{
-		.mod = {0},
-		.name = "sceNetUpnp_Library",
-		.found = false
-	}
-	#endif
-};
 
 static void track_module(SceModule2 *mod){
 	for (int i = 0;i < sizeof(tracked_modules) / sizeof(tracked_modules[0]);i++){

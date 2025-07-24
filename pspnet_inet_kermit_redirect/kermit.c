@@ -90,9 +90,11 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	sceKermitSendRequest661(request_uncached, mode, cmd, 14, 0, &response);
 	sceKernelDelayThread(500);
 	sceKernelDcacheWritebackInvalidateRange(&slot->done, sizeof(slot->done));
+	uint32_t cycles = 0;
 	while (!slot->done){
 		sceKernelDcacheWritebackInvalidateRange(&slot->done, sizeof(slot->done));
-		sceKernelDelayThread(nbio ? 500 : 5000);
+		sceKernelDelayThread(nbio ? 500 : cycles < 50 ? 5000 : 20000);
+		cycles++;
 	}
 
 	sceKernelDcacheWritebackInvalidateRange(&slot->ret, sizeof(slot->ret));
