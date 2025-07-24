@@ -11,7 +11,7 @@
 
 #include <errno.h>
 
-#define LOG_CMD 1
+#define LOG_CMD 0
 
 struct inet_worker{
 	SceUID sema;
@@ -23,12 +23,49 @@ struct inet_worker{
 	bool busy;
 };
 
-struct inet_worker workers[16] = {0};
+struct thread_worker_map_entry{
+	uint64_t last_update;
+	int psp_thread;
+	int worker_id;
+};
+
+struct inet_worker workers[32] = {0};
 static int num_workers = 0;
 
 // the vita can do up to 1024 sockets?
 int32_t sockfd_map[255];
 SceUID sockfd_map_mutex = -1;
+struct thread_worker_map_entry thread_worker_map[255] = {0};
+
+static int get_sock_worker_map(int psp_thread){
+	int oldest_slot = -1;
+	for (int i = 0;i < sizeof(thread_worker_map) / sizeof(thread_worker_map[0]);i++){
+		if (thread_worker_map[i].psp_thread == psp_thread){
+			thread_worker_map[i].last_update = sceKernelGetSystemTimeWide();
+			#if LOG_CMD
+			LOG("%s: 0x%x -> 0x%x\n", __func__, thread_worker_map[i].psp_thread, thread_worker_map[i].worker_id);
+			#endif
+			return thread_worker_map[i].worker_id;
+		}
+		if (oldest_slot == -1 || (thread_worker_map[oldest_slot].last_update > thread_worker_map[i].last_update)){
+			oldest_slot = i;
+		}
+	}
+
+	static int last_assigned_worker = -1;
+
+	thread_worker_map[oldest_slot].psp_thread = psp_thread;
+	thread_worker_map[oldest_slot].last_update = sceKernelGetSystemTimeWide();
+	last_assigned_worker++;
+	if (last_assigned_worker == num_workers){
+		last_assigned_worker = 0;
+	}
+	thread_worker_map[oldest_slot].worker_id = last_assigned_worker;
+	#if LOG_CMD
+	LOG("%s: new 0x%x -> 0x%x\n", __func__, thread_worker_map[oldest_slot].psp_thread, thread_worker_map[oldest_slot].worker_id);
+	#endif
+	return thread_worker_map[oldest_slot].worker_id;
+}
 
 static void translate_sockopt(int psp_level, int psp_optname, int *level, int *optname){
 	if (psp_level == 0xffff && psp_optname == 0x1009){
@@ -119,99 +156,6 @@ static void log_request(SceKermitRequest *request){
 	LOG("%s: unknown 0x%x %s\n", __func__, request->cmd, args);
 }
 
-int handle_inet_request(SceKermitRequest *request){
-	#if 0
-	log_request(request);
-	#endif
-
-	#if 1
-	if (request->cmd == 0x34){
-		// looks like it is for closing all psp sockets
-		int num_active_psp_sockets = 0;
-		int num_close_failure = 0;
-		sceKernelLockMutex(sockfd_map_mutex, 1, 0);
-		for (int i = 0;i < sizeof(sockfd_map) / sizeof(sockfd_map[0]);i++){
-			if (sockfd_map[i] != -1){
-				num_active_psp_sockets++;
-				sceNetSocketAbort(sockfd_map[i], 0);
-				int close_status = sceNetSocketClose(sockfd_map[i]);
-				if (close_status != 0){
-					LOG("%s: failed closing socket 0x%x, 0x%x\n", __func__, sockfd_map[i], close_status);
-					num_close_failure++;
-				}
-				sockfd_map[i] = -1;
-			}
-		}
-		sceKernelUnlockMutex(sockfd_map_mutex, 1);
-		LOG("%s: command 0x%x, closed %d active psp socket(s), %d socket(s) refused to close\n", __func__, request->cmd, num_active_psp_sockets, num_close_failure);
-		return 0;
-	}
-	#endif
-
-	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SOCKET_IOCTL){
-		#if LOG_CMD
-		char args[256];
-		int offset = 0;
-		for (int i = 0;i < 14;i++){
-			offset += sprintf(&args[offset], "0x%x ", (uint32_t)request->args[i]);
-		}
-		LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
-		#endif
-		return 0;
-	}
-
-	int free_worker = -1;
-	int shortest_queue_worker = -1;
-	for (int i = 0;i < num_workers;i++){
-		if (!workers[i].busy){
-			free_worker = i;
-			break;
-		}
-		if (shortest_queue_worker == -1 || workers[shortest_queue_worker].num_requests > workers[i].num_requests){
-			shortest_queue_worker = i;
-		}
-	}
-
-	struct inet_worker *worker = NULL;
-	if (free_worker != -1){
-		worker = &workers[free_worker];
-	}else{
-		worker = &workers[shortest_queue_worker];
-	}
-
-	while (true){
-		sceKernelLockMutex(worker->queue_mutex, 1, 0);
-
-		if (worker->num_requests == sizeof(worker->queue) / sizeof(worker->queue[0])){
-			// not good, in fact very bad
-			LOG("%s: work queue is full! waiting...\n", __func__);
-			sceKernelUnlockMutex(worker->queue_mutex, 1);
-			sceKernelDelayThread(10000);
-			continue;
-		}
-
-		worker->queue[worker->num_requests] = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_IN, sizeof(struct request_slot));
-		#if 0
-		char args[256];
-		int offset = 0;
-		for (int i = 0;i < 14;i++){
-			offset += sprintf(&args[offset], "0x%x ", *(uint32_t*)&worker->queue[worker->num_requests]->args[i]);
-		}
-		LOG("%s: queuing request addr 0x%x, 0x%x %s\n", __func__, worker->queue[worker->num_requests], worker->queue[worker->num_requests]->cmd, args);
-		#endif
-
-		worker->num_requests++;
-		kermit_respond_request(KERMIT_MODE_WLAN, request, 0);
-
-		sceKernelSignalSema(worker->sema, 1);
-
-		sceKernelUnlockMutex(worker->queue_mutex, 1);
-		break;
-	}
-
-	return 1;
-}
-
 struct psp_poll_fd{
 	int sockfd;
 	int16_t events;
@@ -244,10 +188,7 @@ static void psp_select_set_fd(uint32_t *field, int sockfd, bool set){
 }
 
 static int32_t get_sockfd(int psp_sockfd){
-	if (psp_sockfd < 0){
-		return -1;
-	}
-	if (psp_sockfd >= sizeof(sockfd_map) / sizeof(int32_t)){
+	if (psp_sockfd < 0 || psp_sockfd >= sizeof(sockfd_map) / sizeof(int32_t)){
 		return -1;
 	}
 	sceKernelLockMutex(sockfd_map_mutex, 1, 0);
@@ -289,7 +230,7 @@ struct psp_select_timeval{
 
 int (*sceNetSyscallIoctl_import)(int sockfd, uint32_t command, void *data) = NULL;
 
-static void handle_request(struct request_slot *request){
+static void handle_request(struct request_slot *request, struct inet_worker *worker){
 	int32_t response[2] = {0};
 
 	switch(request->cmd){
@@ -993,7 +934,7 @@ static int inet_queue_worker(unsigned int args, void *argp){
 		sceKernelUnlockMutex(worker->queue_mutex, 1);
 
 		for (int i = 0;i < num_requests;i++){
-			handle_request(queue[i]);
+			handle_request(queue[i], worker);
 		}
 
 		asm volatile ("" : : : "memory");
@@ -1002,6 +943,84 @@ static int inet_queue_worker(unsigned int args, void *argp){
 	}
 
 	return 0;
+}
+
+int handle_inet_request(SceKermitRequest *request){
+	#if 0
+	log_request(request);
+	#endif
+
+	if (request->cmd == 0x34){
+		// looks like it is for closing all psp sockets
+		int num_active_psp_sockets = 0;
+		int num_close_failure = 0;
+		sceKernelLockMutex(sockfd_map_mutex, 1, 0);
+		for (int i = 0;i < sizeof(sockfd_map) / sizeof(sockfd_map[0]);i++){
+			if (sockfd_map[i] != -1){
+				num_active_psp_sockets++;
+				sceNetSocketAbort(sockfd_map[i], 0);
+				int close_status = sceNetSocketClose(sockfd_map[i]);
+				if (close_status != 0){
+					LOG("%s: failed closing socket 0x%x, 0x%x\n", __func__, sockfd_map[i], close_status);
+					num_close_failure++;
+				}
+				sockfd_map[i] = -1;
+			}
+		}
+		sceKernelUnlockMutex(sockfd_map_mutex, 1);
+		LOG("%s: command 0x%x, closed %d active psp socket(s), %d socket(s) refused to close\n", __func__, request->cmd, num_active_psp_sockets, num_close_failure);
+		return 0;
+	}
+
+	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SOCKET_IOCTL){
+		#if LOG_CMD
+		char args[256];
+		int offset = 0;
+		for (int i = 0;i < 14;i++){
+			offset += sprintf(&args[offset], "0x%x ", (uint32_t)request->args[i]);
+		}
+		LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
+		#endif
+		return 0;
+	}
+
+	struct request_slot *slot = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_INOUT, sizeof(struct request_slot));
+
+	struct inet_worker *worker = NULL;
+
+	worker = &workers[get_sock_worker_map(slot->psp_thread)];
+
+	while (true){
+		sceKernelLockMutex(worker->queue_mutex, 1, 0);
+
+		if (worker->num_requests == sizeof(worker->queue) / sizeof(worker->queue[0])){
+			// not good, in fact very bad
+			LOG("%s: work queue is full! waiting...\n", __func__);
+			sceKernelUnlockMutex(worker->queue_mutex, 1);
+			sceKernelDelayThread(10000);
+			continue;
+		}
+
+		worker->queue[worker->num_requests] = slot;
+		#if 0
+		char args[256];
+		int offset = 0;
+		for (int i = 0;i < 14;i++){
+			offset += sprintf(&args[offset], "0x%x ", *(uint32_t*)&worker->queue[worker->num_requests]->args[i]);
+		}
+		LOG("%s: queuing request addr 0x%x, 0x%x %s\n", __func__, worker->queue[worker->num_requests], worker->queue[worker->num_requests]->cmd, args);
+		#endif
+
+		worker->num_requests++;
+		kermit_respond_request(KERMIT_MODE_WLAN, request, 0);
+
+		sceKernelSignalSema(worker->sema, 1);
+
+		sceKernelUnlockMutex(worker->queue_mutex, 1);
+		break;
+	}
+
+	return 1;
 }
 
 int inet_init(){

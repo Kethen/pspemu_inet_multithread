@@ -4,6 +4,7 @@
 
 #include <pspsdk.h>
 #include <psputils.h>
+#include <pspthreadman.h>
 
 #include "kermit.h"
 
@@ -20,7 +21,7 @@ int sceKermitSendRequest661(SceKermitRequest *request, uint32_t mode, uint32_t c
 // get around the message pipe architecture, at least going by https://github.com/DaveeFTW/vita_kermit/blob/90334991fcf2b93c42cdf767d60b825ccee9d1b1/kermit.c#L48-L165
 struct request_slot request_slots[16];
 
-static int reserve_request_slot(){
+static struct request_slot *reserve_request_slot(){
 	while(true){
 		int interrupts = pspSdkDisableInterrupts();
 		for(int i = 0;i < sizeof(request_slots) / sizeof(request_slots[0]);i++){
@@ -28,7 +29,7 @@ static int reserve_request_slot(){
 				request_slots[i].in_use = true;
 				request_slots[i].done = false;
 				pspSdkEnableInterrupts(interrupts);
-				return i;
+				return &request_slots[i];
 			}
 		}
 		pspSdkEnableInterrupts(interrupts);
@@ -36,18 +37,17 @@ static int reserve_request_slot(){
 	}
 }
 
-static void free_request_slot(int slot){
+static void free_request_slot(struct request_slot *slot){
 	int interrupts = pspSdkDisableInterrupts();
-	request_slots[slot].in_use = false;
+	slot->in_use = false;
 	pspSdkEnableInterrupts(interrupts);
 }
 
 uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbio, ...){
-	int slot_idx = reserve_request_slot();
-
-	struct request_slot *slot = &request_slots[slot_idx];
+	struct request_slot *slot = reserve_request_slot();
 	slot->mode = mode;
 	slot->cmd = cmd;
+	slot->psp_thread = sceKernelGetThreadId();
 
 	#if LOG_REQUESTS
 	char args_log[255];
@@ -93,7 +93,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	uint32_t cycles = 0;
 	while (!slot->done){
 		sceKernelDcacheWritebackInvalidateRange(&slot->done, sizeof(slot->done));
-		sceKernelDelayThread(nbio ? 500 : cycles < 50 ? 5000 : 20000);
+		sceKernelDelayThread(nbio ? 500 : cycles < 100 ? 5000 : 200000);
 		cycles++;
 	}
 
@@ -101,6 +101,6 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	pspSdkSetK1(k1);
 
 	uint64_t ret = slot->ret;
-	free_request_slot(slot_idx);
+	free_request_slot(slot);
 	return ret;
 }
