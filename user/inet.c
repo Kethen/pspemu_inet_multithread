@@ -11,6 +11,8 @@
 
 #include <errno.h>
 
+#define LOG_CMD 1
+
 struct inet_worker{
 	SceUID sema;
 	SceUID queue_mutex;
@@ -147,7 +149,7 @@ int handle_inet_request(SceKermitRequest *request){
 	#endif
 
 	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SOCKET_IOCTL){
-		#if 1
+		#if LOG_CMD
 		char args[256];
 		int offset = 0;
 		for (int i = 0;i < 14;i++){
@@ -302,11 +304,11 @@ static void handle_request(struct request_slot *request){
 				break;
 			}
 			response[1] = psp_sockfd;
-			#if 1
 			if (response[1] >= 0){
+				#if LOG_CMD
 				LOG("%s: created socket 0x%x/0x%x with type 0x%x\n", __func__, sockfd, psp_sockfd, type);
+				#endif
 			}
-			#endif
 
 			break;
 		}
@@ -321,7 +323,7 @@ static void handle_request(struct request_slot *request){
 			addr.sin_vport = psp_addr->sin_vport;
 			addr.sin_addr.s_addr = psp_addr->sin_addr.s_addr;
 			response[1] = sceNetBind(sockfd, (void *)&addr, sizeof(SceNetSockaddrIn));
-			#if 1
+			#if LOG_CMD
 			LOG("%s: bind 0x%x/0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, addr.sin_addr.s_addr, sceNetNtohs(addr.sin_port), sceNetNtohs(addr.sin_vport), response[1]);
 			#endif
 
@@ -358,7 +360,7 @@ static void handle_request(struct request_slot *request){
 			if (addrlen_in_out != NULL)
 				kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(int32_t));
 
-			#if 1
+			#if LOG_CMD
 			LOG("%s: accept 0x%x/0x%x -> 0x%x/0x%x from 0x%x %d (%d)\n", __func__, sockfd, psp_sockfd, accept_sockfd, psp_accept_sockfd, addr_out->sin_addr.s_addr, sceNetNtohs(addr_out->sin_port), sceNetNtohs(addr_out->sin_vport));
 			#endif
 
@@ -377,7 +379,7 @@ static void handle_request(struct request_slot *request){
 			int32_t addrlen = *(int32_t*)&request->args[2];
 			response[1] = sceNetConnect(sockfd, (void *)&addr, addrlen);
 
-			#if 1
+			#if LOG_CMD
 			LOG("%s: connect 0x%x/0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, addr.sin_addr.s_addr, sceNetNtohs(addr.sin_port), sceNetNtohs(addr.sin_vport), response[1]);
 			#endif
 
@@ -402,7 +404,7 @@ static void handle_request(struct request_slot *request){
 
 			response[1] = sceNetSetsockopt(sockfd, level, optname, optval, optlen);
 
-			#if 1
+			#if LOG_CMD
 			int32_t optval_log = 0;
 			if (optlen == 1){
 				optval_log = *(int8_t*)optval;
@@ -432,7 +434,7 @@ static void handle_request(struct request_slot *request){
 				kermit_pspemu_writeback_cache(optval_out, *optlen_in_out);
 			}
 
-			#if 1
+			#if LOG_CMD
 			int32_t optval_log = 0;
 			if (*optlen_in_out == 1){
 				optval_log = *(int8_t*)optval_out;
@@ -478,9 +480,11 @@ static void handle_request(struct request_slot *request){
 			uint32_t size = *(uint32_t *)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, size);
 			int32_t flags = *(int32_t *)&request->args[3];
-			flags = flags & (~SCE_NET_MSG_USECRYPTO);
-			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			response[1] = sceNetSend(sockfd, buf, size, flags);
+
+			#if LOG_CMD
+			LOG("%s: send 0x%x/0x%x 0x%x %u 0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, response[1]);
+			#endif
 
 			break;
 		}
@@ -490,8 +494,6 @@ static void handle_request(struct request_slot *request){
 			uint32_t size = *(uint32_t *)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, size);
 			int32_t flags = *(int32_t *)&request->args[3];
-			flags = flags & (~SCE_NET_MSG_USECRYPTO);
-			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			SceNetSockaddrIn *psp_addr = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_IN, sizeof(SceNetSockaddrIn));
 			SceNetSockaddrIn addr = {0};
 			addr.sin_len = sizeof(addr);
@@ -500,6 +502,10 @@ static void handle_request(struct request_slot *request){
 			addr.sin_vport = psp_addr->sin_vport;
 			addr.sin_addr.s_addr = psp_addr->sin_addr.s_addr;
 			response[1] = sceNetSendto(sockfd, buf, size, flags, (void *)&addr, sizeof(SceNetSockaddrIn));
+
+			#if LOG_CMD
+			LOG("%s: sendto 0x%x/0x%x 0x%x %u 0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, addr.sin_addr.s_addr, sceNetNtohs(addr.sin_port), sceNetNtohs(addr.sin_vport), response[1]);
+			#endif
 
 			break;
 		}
@@ -544,6 +550,10 @@ static void handle_request(struct request_slot *request){
 			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			response[1] = sceNetSendmsg(sockfd, &msg, flags);
 
+			#if LOG_CMD
+			LOG("%s: sendmsg 0x%x/0x%x 0x%x/0x%x 0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, &msg, psp_msg, flags, response[1]);
+			#endif
+
 			break;
 		}
 		case KERMIT_INET_RECV:{
@@ -558,6 +568,10 @@ static void handle_request(struct request_slot *request){
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(buf, size);
 			}
+
+			#if LOG_CMD
+			LOG("%s: recv 0x%x/0x%x 0x%x %u 0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, response[1]);
+			#endif
 
 			break;
 		}
@@ -579,6 +593,10 @@ static void handle_request(struct request_slot *request){
 				if (addrlen_in_out != NULL && addr_out != NULL)
 					kermit_pspemu_writeback_cache(addr_out, *addrlen_in_out);
 			}
+
+			#if LOG_CMD
+			LOG("%s: recvfrom 0x%x/0x%x 0x%x %u 0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, addr_out->sin_addr.s_addr, sceNetNtohs(addr_out->sin_port), sceNetNtohs(addr_out->sin_vport), response[1]);
+			#endif
 
 			break;
 		}
@@ -626,6 +644,10 @@ static void handle_request(struct request_slot *request){
 				}
 			}
 
+			#if LOG_CMD
+			LOG("%s: recvmsg 0x%x/0x%x 0x%x/0x%x 0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, &msg, psp_msg, flags, response[1]);
+			#endif
+
 			break;
 		}
 		case KERMIT_INET_CLOSE_WITH_RST:
@@ -633,7 +655,7 @@ static void handle_request(struct request_slot *request){
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			response[1] = sceNetSocketClose(sockfd);
-			#if 1
+			#if LOG_CMD
 			if (response[1] >= 0){
 				remove_sockfd(psp_sockfd);
 				LOG("%s: removed socket 0x%x/0x%x\n", __func__, sockfd, psp_sockfd);
@@ -669,6 +691,17 @@ static void handle_request(struct request_slot *request){
 				break;
 			}
 
+			#if LOG_CMD
+			int poll_in_log_offset = 0;
+			char poll_in_log[1024 * 2] = {0};
+			int poll_out_log_offset = 0;
+			char poll_out_log[1024 * 2] = {0};
+			int poll_in_rlog_offset = 0;
+			char poll_in_rlog[1024 * 2] = {0};
+			int poll_out_rlog_offset = 0;
+			char poll_out_rlog[1024 * 2] = {0};
+			#endif
+
 			int epoll_fds = 0;
 			for (int i = 0;i < nfds;i++){
 				SceNetEpollEvent event = {0};
@@ -690,6 +723,15 @@ static void handle_request(struct request_slot *request){
 					fds[i].revents |= POLLNVAL;
 					continue;
 				}
+
+				#if LOG_CMD
+				if (event.events & SCE_NET_EPOLLIN){
+					poll_in_log_offset += sprintf(&poll_in_log[poll_in_log_offset], "0x%x ", fds[i].sockfd);
+				}
+				if (event.events & SCE_NET_EPOLLOUT){
+					poll_out_log_offset += sprintf(&poll_out_log[poll_out_log_offset], "0x%x ", fds[i].sockfd);
+				}
+				#endif
 
 				event.data.fd = i;
 
@@ -716,9 +758,15 @@ static void handle_request(struct request_slot *request){
 			for (int i = 0;i < response[1];i++){
 				if (events[i].events & SCE_NET_EPOLLIN){
 					fds[events[i].data.fd].revents |= POLLIN | POLLRDNORM;
+					#if LOG_CMD
+					poll_in_rlog_offset += sprintf(&poll_in_rlog[poll_in_rlog_offset], "0x%x ", fds[events[i].data.fd].sockfd);
+					#endif
 				}
 				if (events[i].events & SCE_NET_EPOLLOUT){
 					fds[events[i].data.fd].revents |= POLLOUT;
+					#if LOG_CMD
+					poll_out_rlog_offset += sprintf(&poll_out_rlog[poll_out_rlog_offset], "0x%x ", fds[events[i].data.fd].sockfd);
+					#endif
 				}
 				if (events[i].events & SCE_NET_EPOLLERR){
 					fds[events[i].data.fd].revents |= POLLERR;
@@ -729,6 +777,10 @@ static void handle_request(struct request_slot *request){
 			}
 
 			kermit_pspemu_writeback_cache(fds, nfds * sizeof(struct psp_poll_fd));
+
+			#if LOG_CMD
+			LOG("%s: poll 0x%x(%s)(%s)(%s)(%s) %d %d, 0x%x\n", __func__, fds, poll_in_log, poll_out_log, poll_in_rlog, poll_out_rlog, nfds, timeout, response[1]);
+			#endif
 
 			break;
 		}
@@ -759,9 +811,22 @@ static void handle_request(struct request_slot *request){
 				break;
 			}
 
+			#if LOG_CMD
+			int readfds_log_offset = 0;
+			char readfds_log[1024 * 2] = {0};
+			int writefds_log_offset = 0;
+			char writefds_log[1024 * 2] = {0};
+			int readfds_out_log_offset = 0;
+			char readfds_out_log[1024 * 2] = {0};
+			int writefds_out_log_offset = 0;
+			char writefds_out_log[1024 * 2] = {0};
+			#endif
+
 			int epoll_fds = 0;
 			for (int i = 0;i < nfds;i++){
 				SceNetEpollEvent event = {0};
+
+				int sockfd = get_sockfd(i);
 
 				// only do these for now, since they map correctly to epoll
 				if (readfds != NULL && psp_select_fd_is_set(readfds, i)){
@@ -780,12 +845,20 @@ static void handle_request(struct request_slot *request){
 					continue;
 				}
 
-				int sockfd = get_sockfd(i);
 				if (sockfd == -1){
 					response[1] = -1;
 					response[0] = EBADF;
 					break;
 				}
+
+				#if LOG_CMD
+				if (event.events & SCE_NET_EPOLLIN){
+					readfds_log_offset += sprintf(&readfds_log[readfds_log_offset], "0x%x ", i);
+				}
+				if (event.events & SCE_NET_EPOLLOUT){
+					writefds_log_offset += sprintf(&writefds_log[writefds_log_offset], "0x%x ", i);
+				}
+				#endif
 
 				event.data.fd = i;
 
@@ -813,13 +886,22 @@ static void handle_request(struct request_slot *request){
 			}
 
 			if (response[1] != 0){
-				for (int i = 0;i < nfds;i++){
+				for (int i = 0;i < response[1];i++){
 					if (events[i].events & SCE_NET_EPOLLIN && readfds != NULL){
 						psp_select_set_fd(readfds, events[i].data.fd, true);
 					}
 					if (events[i].events & SCE_NET_EPOLLOUT && writefds != NULL){
 						psp_select_set_fd(writefds, events[i].data.fd, true);
 					}
+
+					#if LOG_CMD
+					if (events[i].events & SCE_NET_EPOLLIN){
+						readfds_out_log_offset += sprintf(&readfds_out_log[readfds_out_log_offset], "0x%x ", events[i].data.fd);
+					}
+					if (events[i].events & SCE_NET_EPOLLOUT){
+						writefds_out_log_offset += sprintf(&writefds_out_log[writefds_out_log_offset], "0x%x ", events[i].data.fd);
+					}
+					#endif
 				}
 			}
 
@@ -830,12 +912,20 @@ static void handle_request(struct request_slot *request){
 			if (exceptfds != NULL)
 				kermit_pspemu_writeback_cache(exceptfds, sizeof(uint32_t) * 8);
 
+			#if LOG_CMD
+			LOG("%s: select %d(%d) 0x%x(%s)(%s) 0x%x(%s)(%s) 0x%x 0x%x(%d), 0x%x\n", __func__, nfds, epoll_fds, readfds, readfds_log, readfds_out_log, writefds, writefds_log, writefds_out_log, exceptfds, timeout, timeout_usec, response[1]);
+			#endif
+
 			break;
 		}
 		case KERMIT_INET_SOCKET_ABORT:{
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			response[1] = sceNetSocketAbort(sockfd, 0);
+
+			#if LOG_CMD
+			LOG("%s: SocketAbort 0x%x/0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, response[1]);
+			#endif
 
 			break;
 		}
@@ -845,18 +935,12 @@ static void handle_request(struct request_slot *request){
 			uint32_t command = *(uint32_t*)&request->args[1];
 			void *data = request->args[2] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[2], KERMIT_ADDR_MODE_INOUT, 0x24);
 
-			{
-				LOG("%s: blocked ioctl 0x%x/0x%x 0x%x 0x%x/0x%x\n", __func__, sockfd, psp_sockfd, command, data, *(uint32_t*)&request->args[2]);
-				response[1] = 0;
-				break;
-			}
-
 			response[1] = sceNetSyscallIoctl_import(sockfd, command, data);
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(data, 0x24);
 			}
 
-			#if 1
+			#if LOG_CMD
 			LOG("%s: ioctl 0x%x/0x%x 0x%x 0x%x/0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, command, data, *(uint32_t*)&request->args[2], response[1]);
 			#endif
 
@@ -868,6 +952,10 @@ static void handle_request(struct request_slot *request){
 			response[0] = -1;
 			break;
 		}
+	}
+
+	if (response[1] < 0 && response[0] != 0){
+		LOG("%s: cmd 0x%x gets error 0x%x\n", __func__, request->cmd, response[0]);
 	}
 
 	if (response[1] < 0 && response[0] == 0){
