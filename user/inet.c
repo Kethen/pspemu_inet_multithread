@@ -21,6 +21,8 @@ struct inet_worker{
 	SceUID tid;
 	bool should_stop;
 	bool busy;
+	int id;
+	int num_sockets;
 };
 
 struct thread_worker_map_entry{
@@ -36,6 +38,24 @@ static int num_workers = 0;
 int32_t sockfd_map[255];
 SceUID sockfd_map_mutex = -1;
 struct thread_worker_map_entry thread_worker_map[255] = {0};
+int32_t sockfd_worker_map[sizeof(sockfd_map)/sizeof(sockfd_map[0])];
+SceUID sockfd_worker_map_mutex = -1;
+
+static void map_sockfd_worker(int psp_sockfd, int worker_id){
+	sceKernelLockMutex(sockfd_worker_map_mutex, 1, 0);
+	sockfd_worker_map[psp_sockfd] = worker_id;
+	sceKernelUnlockMutex(sockfd_worker_map_mutex, 1);
+}
+
+static int get_sockfd_worker(int psp_sockfd){
+	if (psp_sockfd < 0 || psp_sockfd >= sizeof(sockfd_worker_map) / sizeof(sockfd_worker_map[0])){
+		return -1;
+	}
+	sceKernelLockMutex(sockfd_worker_map_mutex, 1, 0);
+	int ret = sockfd_worker_map[psp_sockfd];
+	sceKernelUnlockMutex(sockfd_worker_map_mutex, 1);
+	return ret;
+}
 
 static int get_sock_worker_map(int psp_thread){
 	int oldest_slot = -1;
@@ -249,6 +269,8 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				#if LOG_CMD
 				LOG("%s: created socket 0x%x/0x%x with type 0x%x\n", __func__, sockfd, psp_sockfd, type);
 				#endif
+				map_sockfd_worker(psp_sockfd, worker->id);
+				worker->num_sockets++;
 			}
 
 			break;
@@ -336,12 +358,6 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			translate_sockopt(psp_level, psp_optname, &level, &optname);
 			int32_t optlen = *(int32_t *)&request->args[4];
 			void *optval = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[3], KERMIT_ADDR_MODE_IN, optlen);
-
-			if (level == SCE_NET_SOL_SOCKET && (optname == SCE_NET_SO_USECRYPTO || optname == SCE_NET_SO_USESIGNATURE)){
-				LOG("%s: blocking cryptography 0x%x on p2p vsock 0x%x/0x%x\n", __func__, optname, sockfd, psp_sockfd);
-				response[1] = 0;
-				break;
-			}
 
 			response[1] = sceNetSetsockopt(sockfd, level, optname, optval, optlen);
 
@@ -487,8 +503,6 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			}
 			// ignore msg_control for now
 			int32_t flags = *(int32_t *)&request->args[2];
-			flags = flags & (~SCE_NET_MSG_USECRYPTO);
-			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			response[1] = sceNetSendmsg(sockfd, &msg, flags);
 
 			#if LOG_CMD
@@ -503,8 +517,6 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t*)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, size);
 			int32_t flags = *(int32_t *)&request->args[3];
-			flags = flags & (~SCE_NET_MSG_USECRYPTO);
-			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			response[1] = sceNetRecv(sockfd, buf, size, flags);
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(buf, size);
@@ -522,8 +534,6 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t*)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, size);
 			int32_t flags = *(int32_t *)&request->args[3];
-			flags = flags & (~SCE_NET_MSG_USECRYPTO);
-			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			int32_t *addrlen_in_out = request->args[5] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[5], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			SceNetSockaddrIn *addr_out = request->args[4] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_OUT, *addrlen_in_out);
 			response[1] = sceNetRecvfrom(sockfd, buf, size, flags, (void *)addr_out, addrlen_in_out);
@@ -571,8 +581,6 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			}
 			// ignore msg_control for now
 			int32_t flags = *(int32_t *)&request->args[2];
-			flags = flags & (~SCE_NET_MSG_USECRYPTO);
-			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
 			response[1] = sceNetRecvmsg(sockfd, &msg, flags);
 			if (response[1] >= 0){
 				if (psp_msg->msg_name != NULL && psp_msg->msg_namelen != 0){
@@ -596,12 +604,14 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			response[1] = sceNetSocketClose(sockfd);
-			#if LOG_CMD
 			if (response[1] >= 0){
-				remove_sockfd(psp_sockfd);
+				#if LOG_CMD
 				LOG("%s: removed socket 0x%x/0x%x\n", __func__, sockfd, psp_sockfd);
+				#endif
+				map_sockfd_worker(-1, worker->id);
+				remove_sockfd(psp_sockfd);
+				worker->num_sockets--;
 			}
-			#endif
 
 			break;
 		}
@@ -988,7 +998,44 @@ int handle_inet_request(SceKermitRequest *request){
 
 	struct inet_worker *worker = NULL;
 
-	worker = &workers[get_sock_worker_map(slot->psp_thread)];
+	int free_worker = -1;
+	int shortest_queue_worker = -1;
+	int least_sockets_worker = -1;
+	for (int i = 0;i < num_workers;i++){
+		if (free_worker == -1 && !workers[i].busy){
+			free_worker = i;
+		}
+		if (shortest_queue_worker == -1 || workers[shortest_queue_worker].num_requests > workers[i].num_requests){
+			shortest_queue_worker = i;
+		}
+		if (least_sockets_worker == -1 || workers[least_sockets_worker].num_sockets > workers[i].num_sockets){
+			least_sockets_worker = i;
+		}
+	}
+
+	if (free_worker != -1){
+		worker = &workers[free_worker];
+	}else{
+		worker = &workers[shortest_queue_worker];
+	}
+
+	if (slot->cmd == KERMIT_INET_SOCKET){
+		#if LOG_CMD
+		LOG("%s: creating new socket on worker 0x%x\n", __func__, least_sockets_worker);
+		#endif
+		worker = &workers[least_sockets_worker];
+	}else{
+		int psp_sockfd = *(int32_t *)&slot->args[0];
+		int worker_id = get_sockfd_worker(psp_sockfd);
+		if (worker_id != -1){
+			#if LOG_CMD
+			LOG("%s: socket 0x%x was mapped to worker 0x%x\n", __func__, psp_sockfd, worker_id);
+			#endif
+			worker = &workers[worker_id];
+		}
+	}
+
+	//worker = &workers[get_sock_worker_map(slot->psp_thread)];
 
 	while (true){
 		sceKernelLockMutex(worker->queue_mutex, 1, 0);
@@ -1030,14 +1077,26 @@ int inet_init(){
 		return 0;
 	}
 
+	sockfd_worker_map_mutex = sceKernelCreateMutex("inet sockfd worker map mutex", 0, 0, NULL);
+	if (sockfd_worker_map_mutex < 0){
+		LOG("%s: failed initializing sockfd worker map mutex, 0x%x\n", __func__, sockfd_worker_map_mutex);
+		return 0;
+	}
+
 	for (int i = 0;i < sizeof(sockfd_map) / sizeof(int32_t);i++){
 		sockfd_map[i] = -1;
+	}
+
+	for (int i = 0;i < sizeof(sockfd_worker_map) / sizeof(sockfd_worker_map[0]);i++){
+		sockfd_worker_map[i] = -1;
 	}
 
 	for (int i = 0;i < sizeof(workers) / sizeof(workers[0]);i++){
 		workers[num_workers].num_requests = 0;
 		workers[num_workers].should_stop = false;
 		workers[num_workers].busy = false;
+		workers[num_workers].id = i;
+		workers[num_workers].num_sockets = 0;
 
 		workers[num_workers].sema = sceKernelCreateSema("inet worker sema", 0, 0, 65535, NULL);
 		if (workers[num_workers].sema < 0){
