@@ -681,7 +681,6 @@ int sceKernelStartModulePatched(SceUID modid, SceSize argsize, void *argp, int *
 	return ret;
 }
 
-
 static void hookKernelStartModule(){
 	u32 func = sctrlHENFindFunction("sceModuleManager", "ModuleMgrForUser", 0x50F0C1EC);
 	if (func == NULL){
@@ -730,8 +729,6 @@ int apply_patch(SceModule2 *mod){
 	}
 	return 0;
 }
-
-
 
 int module_start(SceSize args, void * argp){
 	INIT_LOG();

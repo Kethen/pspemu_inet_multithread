@@ -99,7 +99,7 @@ int kermit_wait_and_get_request_patched(int type, SceKermitRequest **request){
 static SceUID sceKernelCreateThreadPatched(const char *name, SceKernelThreadEntry entry, int initPriority,
                       int stackSize, SceUInt attr, int cpuAffinityMask,
                       const SceKernelThreadOptParam *option) {
-	LOG("%s: starting thread %s with entry 0x%x\n", __func__, name, entry);
+	LOG("%s: starting thread %s with entry 0x%x affinity 0x%x\n", __func__, name, entry, cpuAffinityMask);
 
 	int result = TAI_CONTINUE(SceUID, sceKernelCreateThreadRef, name, entry, initPriority, stackSize, attr, cpuAffinityMask, option);
 	return result;

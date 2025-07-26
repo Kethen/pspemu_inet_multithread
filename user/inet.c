@@ -15,20 +15,13 @@
 
 struct inet_worker{
 	SceUID sema;
-	SceUID queue_mutex;
+	SceUID mutex;
 	struct request_slot *queue[16];
 	int num_requests;
 	SceUID tid;
 	bool should_stop;
 	bool busy;
 	int id;
-	int num_sockets;
-};
-
-struct thread_worker_map_entry{
-	uint64_t last_update;
-	int psp_thread;
-	int worker_id;
 };
 
 struct inet_worker workers[32] = {0};
@@ -37,55 +30,6 @@ static int num_workers = 0;
 // the vita can do up to 1024 sockets?
 int32_t sockfd_map[255];
 SceUID sockfd_map_mutex = -1;
-struct thread_worker_map_entry thread_worker_map[255] = {0};
-int32_t sockfd_worker_map[sizeof(sockfd_map)/sizeof(sockfd_map[0])];
-SceUID sockfd_worker_map_mutex = -1;
-
-static void map_sockfd_worker(int psp_sockfd, int worker_id){
-	sceKernelLockMutex(sockfd_worker_map_mutex, 1, 0);
-	sockfd_worker_map[psp_sockfd] = worker_id;
-	sceKernelUnlockMutex(sockfd_worker_map_mutex, 1);
-}
-
-static int get_sockfd_worker(int psp_sockfd){
-	if (psp_sockfd < 0 || psp_sockfd >= sizeof(sockfd_worker_map) / sizeof(sockfd_worker_map[0])){
-		return -1;
-	}
-	sceKernelLockMutex(sockfd_worker_map_mutex, 1, 0);
-	int ret = sockfd_worker_map[psp_sockfd];
-	sceKernelUnlockMutex(sockfd_worker_map_mutex, 1);
-	return ret;
-}
-
-static int get_sock_worker_map(int psp_thread){
-	int oldest_slot = -1;
-	for (int i = 0;i < sizeof(thread_worker_map) / sizeof(thread_worker_map[0]);i++){
-		if (thread_worker_map[i].psp_thread == psp_thread){
-			thread_worker_map[i].last_update = sceKernelGetSystemTimeWide();
-			#if LOG_CMD
-			LOG("%s: 0x%x -> 0x%x\n", __func__, thread_worker_map[i].psp_thread, thread_worker_map[i].worker_id);
-			#endif
-			return thread_worker_map[i].worker_id;
-		}
-		if (oldest_slot == -1 || (thread_worker_map[oldest_slot].last_update > thread_worker_map[i].last_update)){
-			oldest_slot = i;
-		}
-	}
-
-	static int last_assigned_worker = -1;
-
-	thread_worker_map[oldest_slot].psp_thread = psp_thread;
-	thread_worker_map[oldest_slot].last_update = sceKernelGetSystemTimeWide();
-	last_assigned_worker++;
-	if (last_assigned_worker == num_workers){
-		last_assigned_worker = 0;
-	}
-	thread_worker_map[oldest_slot].worker_id = last_assigned_worker;
-	#if LOG_CMD
-	LOG("%s: new 0x%x -> 0x%x\n", __func__, thread_worker_map[oldest_slot].psp_thread, thread_worker_map[oldest_slot].worker_id);
-	#endif
-	return thread_worker_map[oldest_slot].worker_id;
-}
 
 static void translate_sockopt(int psp_level, int psp_optname, int *level, int *optname){
 	if (psp_level == 0xffff && psp_optname == 0x1009){
@@ -269,8 +213,6 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				#if LOG_CMD
 				LOG("%s: created socket 0x%x/0x%x with type 0x%x\n", __func__, sockfd, psp_sockfd, type);
 				#endif
-				map_sockfd_worker(psp_sockfd, worker->id);
-				worker->num_sockets++;
 			}
 
 			break;
@@ -608,9 +550,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				#if LOG_CMD
 				LOG("%s: removed socket 0x%x/0x%x\n", __func__, sockfd, psp_sockfd);
 				#endif
-				map_sockfd_worker(-1, worker->id);
 				remove_sockfd(psp_sockfd);
-				worker->num_sockets--;
 			}
 
 			break;
@@ -618,7 +558,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 		case KERMIT_INET_POLL:{
 			int32_t nfds = *(int32_t*)&request->args[1];
 			struct psp_poll_fd *fds = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_INOUT, nfds * sizeof(struct psp_poll_fd));
-			uint32_t timeout = *(uint32_t*)&request->args[2];
+			int32_t timeout = *(int32_t*)&request->args[2];
 
 			SceNetEpollEvent events[255] = {0};
 
@@ -629,9 +569,10 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				break;
 			}
 
-			if (timeout < 0){
+			if (timeout < -1){
 				response[1] = -1;
 				response[0] = EINVAL;
+				break;
 			}
 
 			int epollfd = sceNetEpollCreate("pspemu_inet_multithread poll", 0);
@@ -744,14 +685,11 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 
 			SceNetEpollEvent events[255] = {0};
 
-			if (nfds > sizeof(events) / sizeof(SceNetEpollEvent) || nfds < 1){
+			if (nfds > sizeof(events) / sizeof(SceNetEpollEvent) + 1 || nfds < 1){
+				LOG("%s: too many fds on select, %d\n", __func__, nfds);
 				response[1] = -1;
 				response[0] = EINVAL;
-			}
-
-			if (timeout < 0){
-				response[1] = -1;
-				response[0] = EINVAL;
+				break;
 			}
 
 			int epollfd = sceNetEpollCreate("pspemu_inet_multithread select", 0);
@@ -899,6 +837,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			LOG("%s: unknown command 0x%x\n", __func__, request->cmd);
 			response[1] = -1;
 			response[0] = -1;
+
 			break;
 		}
 	}
@@ -929,27 +868,17 @@ static int inet_queue_worker(unsigned int args, void *argp){
 
 	while(!worker->should_stop){
 		// Wait until we were signaled to work
-		sceKernelWaitSema(worker->sema, 1, 0);
+		sceKernelWaitSema(worker->sema, 1, NULL);
 
-		worker->busy = true;
+		// Lock down the worker while working
+		sceKernelLockMutex(worker->mutex, 1, 0);
 
-		asm volatile ("" : : : "memory");
-
-		// Acquire the queue and copy it
-		sceKernelLockMutex(worker->queue_mutex, 1, 0);
-		int num_requests = worker->num_requests;
-		struct request_slot *queue[sizeof(worker->queue) / sizeof(worker->queue[0])];
-		memcpy(queue, worker->queue, sizeof(struct request_slot *) * num_requests);
-		worker->num_requests = 0;
-		sceKernelUnlockMutex(worker->queue_mutex, 1);
-
-		for (int i = 0;i < num_requests;i++){
-			handle_request(queue[i], worker);
+		for (int i = 0;i < worker->num_requests;i++){
+			handle_request(worker->queue[i], worker);
 		}
+		worker->num_requests = 0;
 
-		asm volatile ("" : : : "memory");
-
-		worker->busy = false;
+		sceKernelUnlockMutex(worker->mutex, 1);
 	}
 
 	return 0;
@@ -996,54 +925,42 @@ int handle_inet_request(SceKermitRequest *request){
 
 	struct request_slot *slot = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_INOUT, sizeof(struct request_slot));
 
-	struct inet_worker *worker = NULL;
-
 	int free_worker = -1;
 	int shortest_queue_worker = -1;
-	int least_sockets_worker = -1;
 	for (int i = 0;i < num_workers;i++){
-		if (free_worker == -1 && !workers[i].busy){
-			free_worker = i;
+		if (free_worker == -1){
+			int lock_status = sceKernelTryLockMutex(workers[i].mutex, 1);
+			if (lock_status == 0){
+				if (workers[i].num_requests == 0){
+					free_worker = i;
+				}
+				sceKernelUnlockMutex(workers[i].mutex, 1);
+			}
 		}
+
+		// Not a very reliable fallback, the worker could still be blocking forever
 		if (shortest_queue_worker == -1 || workers[shortest_queue_worker].num_requests > workers[i].num_requests){
 			shortest_queue_worker = i;
 		}
-		if (least_sockets_worker == -1 || workers[least_sockets_worker].num_sockets > workers[i].num_sockets){
-			least_sockets_worker = i;
-		}
 	}
+
+	struct inet_worker *worker = NULL;
 
 	if (free_worker != -1){
 		worker = &workers[free_worker];
 	}else{
+		LOG("%s: warning, queuing request onto a non-free worker\n", __func__);
 		worker = &workers[shortest_queue_worker];
 	}
 
-	if (slot->cmd == KERMIT_INET_SOCKET){
-		#if LOG_CMD
-		LOG("%s: creating new socket on worker 0x%x\n", __func__, least_sockets_worker);
-		#endif
-		worker = &workers[least_sockets_worker];
-	}else{
-		int psp_sockfd = *(int32_t *)&slot->args[0];
-		int worker_id = get_sockfd_worker(psp_sockfd);
-		if (worker_id != -1){
-			#if LOG_CMD
-			LOG("%s: socket 0x%x was mapped to worker 0x%x\n", __func__, psp_sockfd, worker_id);
-			#endif
-			worker = &workers[worker_id];
-		}
-	}
-
-	//worker = &workers[get_sock_worker_map(slot->psp_thread)];
-
 	while (true){
-		sceKernelLockMutex(worker->queue_mutex, 1, 0);
+		// Lock worker and queue work into it
+		sceKernelLockMutex(worker->mutex, 1, 0);
 
 		if (worker->num_requests == sizeof(worker->queue) / sizeof(worker->queue[0])){
 			// not good, in fact very bad
 			LOG("%s: work queue is full! waiting...\n", __func__);
-			sceKernelUnlockMutex(worker->queue_mutex, 1);
+			sceKernelUnlockMutex(worker->mutex, 1);
 			sceKernelDelayThread(10000);
 			continue;
 		}
@@ -1059,11 +976,14 @@ int handle_inet_request(SceKermitRequest *request){
 		#endif
 
 		worker->num_requests++;
+
+		// Work request queued, stop blocking the message pipe
 		kermit_respond_request(KERMIT_MODE_WLAN, request, 0);
 
+		// Let the worker continue working
 		sceKernelSignalSema(worker->sema, 1);
+		sceKernelUnlockMutex(worker->mutex, 1);
 
-		sceKernelUnlockMutex(worker->queue_mutex, 1);
 		break;
 	}
 
@@ -1077,18 +997,8 @@ int inet_init(){
 		return 0;
 	}
 
-	sockfd_worker_map_mutex = sceKernelCreateMutex("inet sockfd worker map mutex", 0, 0, NULL);
-	if (sockfd_worker_map_mutex < 0){
-		LOG("%s: failed initializing sockfd worker map mutex, 0x%x\n", __func__, sockfd_worker_map_mutex);
-		return 0;
-	}
-
 	for (int i = 0;i < sizeof(sockfd_map) / sizeof(int32_t);i++){
 		sockfd_map[i] = -1;
-	}
-
-	for (int i = 0;i < sizeof(sockfd_worker_map) / sizeof(sockfd_worker_map[0]);i++){
-		sockfd_worker_map[i] = -1;
 	}
 
 	for (int i = 0;i < sizeof(workers) / sizeof(workers[0]);i++){
@@ -1096,7 +1006,6 @@ int inet_init(){
 		workers[num_workers].should_stop = false;
 		workers[num_workers].busy = false;
 		workers[num_workers].id = i;
-		workers[num_workers].num_sockets = 0;
 
 		workers[num_workers].sema = sceKernelCreateSema("inet worker sema", 0, 0, 65535, NULL);
 		if (workers[num_workers].sema < 0){
@@ -1104,23 +1013,30 @@ int inet_init(){
 			return num_workers;
 		}
 
-		workers[num_workers].queue_mutex = sceKernelCreateMutex("inet worker mutex", 0, 0, NULL);
-		if (workers[num_workers].queue_mutex < 0){
-			LOG("%s: failed creating queue mutex, 0x%x\n", __func__, workers[num_workers].queue_mutex);
+		workers[num_workers].mutex = sceKernelCreateMutex("inet worker mutex", 0, 0, NULL);
+		if (workers[num_workers].mutex < 0){
+			LOG("%s: failed creating worker mutex, 0x%x\n", __func__, workers[num_workers].mutex);
 			sceKernelDeleteSema(workers[num_workers].sema);
 			return num_workers;
 		}
 
-		workers[num_workers].tid = sceKernelCreateThread("inet worker", inet_queue_worker, 0x10000100, 0x10000, 0, 0, NULL);
+		workers[num_workers].tid = sceKernelCreateThread("inet worker", inet_queue_worker, 0x10000100, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_0, NULL);
 		if (workers[num_workers].tid < 0){
 			LOG("%s: failed creating queue worker, 0x%x\n", __func__, workers[num_workers].tid);
 			sceKernelDeleteSema(workers[num_workers].sema);
-			sceKernelDeleteMutex(workers[num_workers].queue_mutex);
+			sceKernelDeleteMutex(workers[num_workers].mutex);
 			return num_workers;
 		}
 
 		struct inet_worker *worker_ptr = &workers[num_workers];
-		sceKernelStartThread(workers[num_workers].tid, sizeof(struct inet_worker **), &worker_ptr);
+		int start_status = sceKernelStartThread(workers[num_workers].tid, sizeof(struct inet_worker **), &worker_ptr);
+		if (start_status != 0){
+			LOG("%s: failed starting queue worker, 0x%x\n", __func__, start_status);
+			sceKernelDeleteSema(workers[num_workers].sema);
+			sceKernelDeleteMutex(workers[num_workers].mutex);
+			sceKernelDeleteThread(workers[num_workers].tid);
+			return num_workers;
+		}
 
 		num_workers++;
 	}

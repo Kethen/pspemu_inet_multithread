@@ -13,6 +13,9 @@
 
 #define LOG(...) { \
 	sceClibPrintf(__VA_ARGS__); \
+}
+
+#if 0
 	int _log_fd = sceIoOpen(LOG_PATH, SCE_O_WRONLY | SCE_O_APPEND | SCE_O_CREAT, 0777); \
 	if (_log_fd >= 0){ \
 		char _log_buf[1024]; \
@@ -20,6 +23,7 @@
 		sceIoWrite(_log_fd, _log_buf, _log_len); \
 		sceIoClose(_log_fd); \
 	} \
-}
+
+#endif
 
 #endif
