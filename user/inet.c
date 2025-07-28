@@ -24,12 +24,46 @@ struct inet_worker{
 	int id;
 };
 
-struct inet_worker workers[32] = {0};
+struct inet_worker workers[1] = {0};
 static int num_workers = 0;
 
 // the vita can do up to 1024 sockets?
 int32_t sockfd_map[255];
 SceUID sockfd_map_mutex = -1;
+// usec, same on both sides
+int32_t sndtimeo[sizeof(sockfd_map)/sizeof(sockfd_map[0])];
+int32_t rcvtimeo[sizeof(sockfd_map)/sizeof(sockfd_map[0])];
+bool nbio[sizeof(sockfd_map)/sizeof(sockfd_map[0])];
+
+static void set_timeo(int psp_sockfd, int timeo, bool snd){
+	if (psp_sockfd < 0 || psp_sockfd >= sizeof(sndtimeo) / sizeof(sndtimeo[0])){
+		return;
+	}
+	if (snd){
+		sndtimeo[psp_sockfd] = timeo;
+	}else{
+		rcvtimeo[psp_sockfd] = timeo;
+	}
+}
+
+static int get_timeo(int psp_sockfd, bool snd){
+	if (snd){
+		return sndtimeo[psp_sockfd];
+	}else{
+		return rcvtimeo[psp_sockfd];
+	}
+}
+
+static void set_nbio(int psp_sockfd, bool is_nbio){
+	nbio[psp_sockfd] = is_nbio;
+}
+
+static bool get_nbio(int psp_sockfd){
+	if (psp_sockfd < 0 || psp_sockfd >= sizeof(nbio) / sizeof(nbio[0])){
+		return false;
+	}
+	return nbio[psp_sockfd];
+}
 
 static void translate_sockopt(int psp_level, int psp_optname, int *level, int *optname){
 	if (psp_level == 0xffff && psp_optname == 0x1009){
@@ -162,16 +196,16 @@ static int32_t get_sockfd(int psp_sockfd){
 }
 
 static int32_t map_sockfd(int sockfd){
-	sceKernelLockMutex(sockfd_map_mutex, 1, 0);
+	//sceKernelLockMutex(sockfd_map_mutex, 1, 0);
 	// https://xkcd.com/3062/ let's... skip sock 0
 	for (int i = 1;i < sizeof(sockfd_map) / sizeof(int32_t);i++){
 		if (sockfd_map[i] == -1){
 			sockfd_map[i] = sockfd;
-			sceKernelUnlockMutex(sockfd_map_mutex, 1);
+			//sceKernelUnlockMutex(sockfd_map_mutex, 1);
 			return i;
 		}
 	}
-	sceKernelUnlockMutex(sockfd_map_mutex, 1);
+	//sceKernelUnlockMutex(sockfd_map_mutex, 1);
 	return -1;
 }
 
@@ -182,9 +216,9 @@ static void remove_sockfd(int psp_sockfd){
 	if (psp_sockfd >= sizeof(sockfd_map) / sizeof(int32_t)){
 		return;
 	}
-	sceKernelLockMutex(sockfd_map_mutex, 1, 0);
+	//sceKernelLockMutex(sockfd_map_mutex, 1, 0);
 	sockfd_map[psp_sockfd] = -1;
-	sceKernelUnlockMutex(sockfd_map_mutex, 1);
+	//sceKernelUnlockMutex(sockfd_map_mutex, 1);
 }
 
 struct psp_select_timeval{
@@ -194,8 +228,17 @@ struct psp_select_timeval{
 
 int (*sceNetSyscallIoctl_import)(int sockfd, uint32_t command, void *data) = NULL;
 
-static void handle_request(struct request_slot *request, struct inet_worker *worker){
+static bool handle_request(struct request_slot *request, struct inet_worker *worker){
 	int32_t response[2] = {0};
+	bool request_done = false;
+
+	if (request->op_begin == 0){
+		request->op_begin = sceKernelGetSystemTimeWide();
+	}
+
+	#if LOG_CMD
+	LOG("%s: %d requests\n", __func__, worker->num_requests);
+	#endif
 
 	switch(request->cmd){
 		case KERMIT_INET_SOCKET:{
@@ -206,13 +249,20 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				sceNetSocketClose(sockfd);
 				response[1] = -1;
 				response[0] = ENOMEM;
+				request_done = true;
 				break;
 			}
 			response[1] = psp_sockfd;
+			request_done = true;
 			if (response[1] >= 0){
 				#if LOG_CMD
 				LOG("%s: created socket 0x%x/0x%x with type 0x%x\n", __func__, sockfd, psp_sockfd, type);
 				#endif
+				set_timeo(psp_sockfd, 0, true);
+				set_timeo(psp_sockfd, 0, false);
+				set_nbio(psp_sockfd, false);
+				int opt = 1;
+				sceNetSetsockopt(sockfd, SCE_NET_SOL_SOCKET, SCE_NET_SO_NBIO, &opt, sizeof(opt));
 			}
 
 			break;
@@ -228,6 +278,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			addr.sin_vport = psp_addr->sin_vport;
 			addr.sin_addr.s_addr = psp_addr->sin_addr.s_addr;
 			response[1] = sceNetBind(sockfd, (void *)&addr, sizeof(SceNetSockaddrIn));
+			request_done = true;
 			#if LOG_CMD
 			LOG("%s: bind 0x%x/0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, addr.sin_addr.s_addr, sceNetNtohs(addr.sin_port), sceNetNtohs(addr.sin_vport), response[1]);
 			#endif
@@ -239,6 +290,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			int32_t backlog = *(int32_t *)&request->args[1];
 			response[1] = sceNetListen(sockfd, backlog);
+			request_done = true;
 
 			break;
 		}
@@ -248,18 +300,36 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			SceNetSockaddrIn *addr_out = request->args[1] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, sizeof(SceNetSockaddrIn));
 			int32_t *addrlen_in_out = request->args[2] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			int accept_sockfd = sceNetAccept(sockfd, (void *)addr_out, addrlen_in_out);
-			if (accept_sockfd < 0){
-				response[1] = accept_sockfd;
+
+			if (*(uint32_t*)&accept_sockfd == SCE_NET_ERROR_EAGAIN){
+				if (!get_nbio(psp_sockfd)){
+					// just try again later
+					break;
+				}
+				// let the other side know that we have no incoming connection
+				response[1] = -1;
+				response[0] = EAGAIN;
+				request_done = true;
 				break;
 			}
+
+			if (accept_sockfd < 0){
+				response[1] = accept_sockfd;
+				request_done = true;
+				break;
+			}
+
 			int psp_accept_sockfd = map_sockfd(accept_sockfd);
 			if (psp_accept_sockfd == -1){
 				sceNetSocketClose(accept_sockfd);
 				response[1] = -1;
 				response[0] = ENOMEM;
+				request_done = true;
 				break;
 			}
+
 			response[1] = psp_accept_sockfd;
+			request_done = true;
 			if (addr_out != NULL)
 				kermit_pspemu_writeback_cache(addr_out, sizeof(SceNetSockaddrIn));
 			if (addrlen_in_out != NULL)
@@ -282,7 +352,60 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			addr.sin_vport = psp_addr->sin_vport;
 			addr.sin_addr.s_addr = psp_addr->sin_addr.s_addr;
 			int32_t addrlen = *(int32_t*)&request->args[2];
-			response[1] = sceNetConnect(sockfd, (void *)&addr, addrlen);
+
+			if (sockfd == -1){
+				response[1] = -1;
+				response[0] = EBADF;
+				request_done = true;
+				break;
+			}
+
+			if (!request->in_progress){
+				response[1] = sceNetConnect(sockfd, (void *)&addr, addrlen);
+				if (*(uint32_t*)&response[1] == SCE_NET_ERROR_EINPROGRESS){
+					if (!get_nbio(psp_sockfd)){
+						// come back to this later
+						request->in_progress = 1;
+						break;
+					}
+					// the other side is also nbio
+					response[1] = -1;
+					response[0] = EINPROGRESS;
+				}
+			}else{
+				// back from the last cycle
+				int epollfd = sceNetEpollCreate("pspemu_inet_multithread connect", 0);
+				if (epollfd < 0){
+					// I guess we just try again later?
+					LOG("%s: failed creating epoll fd for blocked connect, 0x%x\n", __func__, epollfd);
+					break;
+				}
+				SceNetEpollEvent event = {0};
+				event.events |= SCE_NET_EPOLLOUT;
+				sceNetEpollControl(epollfd, SCE_NET_EPOLL_CTL_ADD, sockfd, &event);
+				int events = sceNetEpollWait(epollfd, &event, 1, 0);
+				if (events < 0){
+					// just try again
+					LOG("%s: epoll wait failed, 0x%x\n", __func__, events);
+					sceNetEpollDestroy(epollfd);
+					break;
+				}
+				if (events == 1 && event.events & SCE_NET_EPOLLOUT){
+					uint32_t error = 0;
+					int optlen = sizeof(error);
+					int get_status = sceNetGetsockopt(sockfd, SCE_NET_SOL_SOCKET, SCE_NET_SO_ERROR, &error, &optlen);
+					if (get_status < 0){
+						LOG("%s: failed getting socket option after connect, 0x%x\n", __func__, get_status);
+						error = get_status;
+					}
+					if (error != 0){
+						error |= 0x80410100;
+					}
+					*(uint32_t*)&response[1] = error;
+					sceNetEpollDestroy(epollfd);
+				}
+			}
+			request_done = true;
 
 			#if LOG_CMD
 			LOG("%s: connect 0x%x/0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, addr.sin_addr.s_addr, sceNetNtohs(addr.sin_port), sceNetNtohs(addr.sin_vport), response[1]);
@@ -301,7 +424,33 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t optlen = *(int32_t *)&request->args[4];
 			void *optval = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[3], KERMIT_ADDR_MODE_IN, optlen);
 
+			if (sockfd == -1){
+				response[1] = -1;
+				response[0] = EBADF;
+				request_done = true;
+				break;
+			}
+
+			// we handle these options
+			if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_SNDTIMEO){
+				set_timeo(psp_sockfd, *(int32_t*)optval, true);
+				response[1] = 0;
+				request_done = true;
+				break;
+			}else if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_RCVTIMEO){
+				set_timeo(psp_sockfd, *(int32_t*)optval, false);
+				response[1] = 0;
+				request_done = true;
+				break;
+			}else if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_NBIO){
+				set_nbio(psp_sockfd, *(int32_t*)optval ? true : false);
+				response[1] = 0;
+				request_done = true;
+				break;
+			}
+
 			response[1] = sceNetSetsockopt(sockfd, level, optname, optval, optlen);
+			request_done = true;
 
 			#if LOG_CMD
 			int32_t optval_log = 0;
@@ -327,11 +476,32 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			translate_sockopt(psp_level, psp_optname, &level, &optname);
 			int32_t *optlen_in_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			void *optval_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[3], KERMIT_ADDR_MODE_OUT, *optlen_in_out);
-			response[1] = sceNetGetsockopt(sockfd, level, optname, optval_out, optlen_in_out);
+
+			if (sockfd == -1){
+				response[1] = -1;
+				response[0] = EBADF;
+				request_done = true;
+				break;
+			}
+
+			// we handle these options
+			if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_SNDTIMEO){
+				*(int32_t*)optval_out = get_timeo(psp_sockfd, true);
+				response[1] = 0;
+			}else if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_RCVTIMEO){
+				*(int32_t*)optval_out = get_timeo(psp_sockfd, false);
+				response[1] = 0;
+			}else if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_NBIO){
+				*(int32_t*)optval_out = get_nbio(psp_sockfd) ? 1 : 0;
+				response[1] = 0;
+			}else{
+				response[1] = sceNetGetsockopt(sockfd, level, optname, optval_out, optlen_in_out);
+			}
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(optlen_in_out, sizeof(int32_t));
 				kermit_pspemu_writeback_cache(optval_out, *optlen_in_out);
 			}
+			request_done = true;
 
 			#if LOG_CMD
 			int32_t optval_log = 0;
@@ -353,6 +523,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t *addrlen_in_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			SceNetSockaddrIn *addr_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, *addrlen_in_out);
 			response[1] = sceNetGetsockname(sockfd, (void *)addr_out, addrlen_in_out);
+			request_done = true;
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(addr_out, *addrlen_in_out);
 				kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(uint32_t));
@@ -366,6 +537,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t *addrlen_in_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			SceNetSockaddrIn *addr_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, *addrlen_in_out);
 			response[1] = sceNetGetpeername(sockfd, (void *)addr_out, addrlen_in_out);
+			request_done = true;
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(addr_out, *addrlen_in_out);
 				kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(uint32_t));
@@ -379,11 +551,31 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t *)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+
+			if (sockfd == -1){
+				response[1] = -1;
+				response[0] = EBADF;
+				request_done = true;
+				break;
+			}
+
 			response[1] = sceNetSend(sockfd, buf, size, flags);
 
 			#if LOG_CMD
 			LOG("%s: send 0x%x/0x%x 0x%x %u 0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, response[1]);
 			#endif
+
+			if (*(uint32_t*)&response[1] == SCE_NET_ERROR_EAGAIN){
+				int timeout = get_timeo(psp_sockfd, true);
+				bool timedout = timeout != 0 && sceKernelGetSystemTimeWide() - request->op_begin > timeout;
+				if (!get_nbio(psp_sockfd) && !(flags & SCE_NET_MSG_DONTWAIT) && !timedout){
+					// try again later
+					break;
+				}
+				response[1] = -1;
+				response[0] = EAGAIN;
+			}
+			request_done = true;
 
 			break;
 		}
@@ -393,6 +585,14 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t *)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+
+			if (sockfd == -1){
+				response[1] = -1;
+				response[0] = EBADF;
+				request_done = true;
+				break;
+			}
+
 			SceNetSockaddrIn *psp_addr = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_IN, sizeof(SceNetSockaddrIn));
 			SceNetSockaddrIn addr = {0};
 			addr.sin_len = sizeof(addr);
@@ -405,6 +605,18 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			#if LOG_CMD
 			LOG("%s: sendto 0x%x/0x%x 0x%x %u 0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, addr.sin_addr.s_addr, sceNetNtohs(addr.sin_port), sceNetNtohs(addr.sin_vport), response[1]);
 			#endif
+
+			if (*(uint32_t*)&response[1] == SCE_NET_ERROR_EAGAIN){
+				int timeout = get_timeo(psp_sockfd, true);
+				bool timedout = timeout != 0 && sceKernelGetSystemTimeWide() - request->op_begin > timeout;
+				if (!get_nbio(psp_sockfd) && !(flags & SCE_NET_MSG_DONTWAIT) && !timedout){
+					// try again later
+					break;
+				}
+				response[1] = -1;
+				response[0] = EAGAIN;
+			}
+			request_done = true;
 
 			break;
 		}
@@ -445,11 +657,31 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			}
 			// ignore msg_control for now
 			int32_t flags = *(int32_t *)&request->args[2];
+
+			if (sockfd == -1){
+				response[1] = -1;
+				response[0] = EBADF;
+				request_done = true;
+				break;
+			}
+
 			response[1] = sceNetSendmsg(sockfd, &msg, flags);
 
 			#if LOG_CMD
 			LOG("%s: sendmsg 0x%x/0x%x 0x%x/0x%x 0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, &msg, psp_msg, flags, response[1]);
 			#endif
+
+			if (*(uint32_t*)&response[1] == SCE_NET_ERROR_EAGAIN){
+				int timeout = get_timeo(psp_sockfd, true);
+				bool timedout = timeout != 0 && sceKernelGetSystemTimeWide() - request->op_begin > timeout;
+				if (!get_nbio(psp_sockfd) && !(flags & SCE_NET_MSG_DONTWAIT) && !timedout){
+					// try again later
+					break;
+				}
+				response[1] = -1;
+				response[0] = EAGAIN;
+			}
+			request_done = true;
 
 			break;
 		}
@@ -459,6 +691,14 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t*)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+
+			if (sockfd == -1){
+				response[1] = -1;
+				response[0] = EBADF;
+				request_done = true;
+				break;
+			}
+
 			response[1] = sceNetRecv(sockfd, buf, size, flags);
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(buf, size);
@@ -467,6 +707,18 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			#if LOG_CMD
 			LOG("%s: recv 0x%x/0x%x 0x%x %u 0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, response[1]);
 			#endif
+
+			if (*(uint32_t*)&response[1] == SCE_NET_ERROR_EAGAIN){
+				int timeout = get_timeo(psp_sockfd, false);
+				bool timedout = timeout != 0 && sceKernelGetSystemTimeWide() - request->op_begin > timeout;
+				if (!get_nbio(psp_sockfd) && !(flags & SCE_NET_MSG_DONTWAIT) && !timedout){
+					// try again later
+					break;
+				}
+				response[1] = -1;
+				response[0] = EAGAIN;
+			}
+			request_done = true;
 
 			break;
 		}
@@ -478,6 +730,14 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t flags = *(int32_t *)&request->args[3];
 			int32_t *addrlen_in_out = request->args[5] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[5], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			SceNetSockaddrIn *addr_out = request->args[4] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_OUT, *addrlen_in_out);
+
+			if (sockfd == -1){
+				response[1] = -1;
+				response[0] = EBADF;
+				request_done = true;
+				break;
+			}
+
 			response[1] = sceNetRecvfrom(sockfd, buf, size, flags, (void *)addr_out, addrlen_in_out);
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(buf, size);
@@ -490,6 +750,18 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			#if LOG_CMD
 			LOG("%s: recvfrom 0x%x/0x%x 0x%x %u 0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, addr_out->sin_addr.s_addr, sceNetNtohs(addr_out->sin_port), sceNetNtohs(addr_out->sin_vport), response[1]);
 			#endif
+
+			if (*(uint32_t*)&response[1] == SCE_NET_ERROR_EAGAIN){
+				int timeout = get_timeo(psp_sockfd, false);
+				bool timedout = timeout != 0 && sceKernelGetSystemTimeWide() - request->op_begin > timeout;
+				if (!get_nbio(psp_sockfd) && !(flags & SCE_NET_MSG_DONTWAIT) && !timedout){
+					// try again later
+					break;
+				}
+				response[1] = -1;
+				response[0] = EAGAIN;
+			}
+			request_done = true;
 
 			break;
 		}
@@ -523,6 +795,14 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			}
 			// ignore msg_control for now
 			int32_t flags = *(int32_t *)&request->args[2];
+
+			if (sockfd == -1){
+				response[1] = -1;
+				response[0] = EBADF;
+				request_done = true;
+				break;
+			}
+
 			response[1] = sceNetRecvmsg(sockfd, &msg, flags);
 			if (response[1] >= 0){
 				if (psp_msg->msg_name != NULL && psp_msg->msg_namelen != 0){
@@ -539,6 +819,18 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			LOG("%s: recvmsg 0x%x/0x%x 0x%x/0x%x 0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, &msg, psp_msg, flags, response[1]);
 			#endif
 
+			if (*(uint32_t*)&response[1] == SCE_NET_ERROR_EAGAIN){
+				int timeout = get_timeo(psp_sockfd, false);
+				bool timedout = timeout != 0 && sceKernelGetSystemTimeWide() - request->op_begin > timeout;
+				if (!get_nbio(psp_sockfd) && !(flags & SCE_NET_MSG_DONTWAIT) && !timedout){
+					// try again later
+					break;
+				}
+				response[1] = -1;
+				response[0] = EAGAIN;
+			}
+			request_done = true;
+
 			break;
 		}
 		case KERMIT_INET_CLOSE_WITH_RST:
@@ -546,6 +838,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			response[1] = sceNetSocketClose(sockfd);
+            request_done = true;
 			if (response[1] >= 0){
 				#if LOG_CMD
 				LOG("%s: removed socket 0x%x/0x%x\n", __func__, sockfd, psp_sockfd);
@@ -595,6 +888,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			#endif
 
 			int epoll_fds = 0;
+			bool has_event = false;
 			for (int i = 0;i < nfds;i++){
 				SceNetEpollEvent event = {0};
 
@@ -613,6 +907,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				int sockfd = get_sockfd(fds[i].sockfd);
 				if (sockfd == -1){
 					fds[i].revents |= POLLNVAL;
+					has_event = true;
 					continue;
 				}
 
@@ -636,14 +931,19 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			if (epoll_fds == 0){
 				sceNetEpollDestroy(epollfd);
 				response[1] = 0;
-				sceKernelDelayThread(timeout_usec);
+				if (sceKernelGetSystemTimeWide() - request->op_begin < timeout_usec){
+					// try again
+					break;
+				}
+				request_done = true;
 				break;
 			}
 
-			response[1] = sceNetEpollWait(epollfd, events, sizeof(events) / sizeof(SceNetEpollEvent), timeout_usec);
+			response[1] = sceNetEpollWait(epollfd, events, sizeof(events) / sizeof(SceNetEpollEvent), 0);
 			sceNetEpollDestroy(epollfd);
 
 			if (response[1] < 0){
+				request_done = true;
 				break;
 			}
 
@@ -653,20 +953,32 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 					#if LOG_CMD
 					poll_in_rlog_offset += sprintf(&poll_in_rlog[poll_in_rlog_offset], "0x%x ", fds[events[i].data.fd].sockfd);
 					#endif
+					has_event = true;
 				}
 				if (events[i].events & SCE_NET_EPOLLOUT){
 					fds[events[i].data.fd].revents |= POLLOUT;
 					#if LOG_CMD
 					poll_out_rlog_offset += sprintf(&poll_out_rlog[poll_out_rlog_offset], "0x%x ", fds[events[i].data.fd].sockfd);
 					#endif
+					has_event = true;
 				}
 				if (events[i].events & SCE_NET_EPOLLERR){
 					fds[events[i].data.fd].revents |= POLLERR;
+					has_event = true;
 				}
 				if (events[i].events & SCE_NET_EPOLLHUP){
 					fds[events[i].data.fd].revents |= POLLHUP;
+					has_event = true;
 				}
 			}
+
+			if (!has_event){
+				if (sceKernelGetSystemTimeWide() - request->op_begin < timeout_usec){
+					// wait for next time
+					break;
+				}
+			}
+			request_done = true;
 
 			kermit_pspemu_writeback_cache(fds, nfds * sizeof(struct psp_poll_fd));
 
@@ -720,15 +1032,10 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				// only do these for now, since they map correctly to epoll
 				if (readfds != NULL && psp_select_fd_is_set(readfds, i)){
 					event.events |= SCE_NET_EPOLLIN;
-					psp_select_set_fd(readfds, i, false);
 				}
 				if (writefds != NULL && psp_select_fd_is_set(writefds, i)){
 					event.events |= SCE_NET_EPOLLOUT;
-					psp_select_set_fd(writefds, i, false);
 				}
-				// hm, what about exceptfds
-				if (exceptfds != NULL)
-					psp_select_set_fd(exceptfds, i, false);
 
 				if (event.events == 0){
 					continue;
@@ -737,6 +1044,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				if (sockfd == -1){
 					response[1] = -1;
 					response[0] = EBADF;
+					request_done = true;
 					break;
 				}
 
@@ -763,7 +1071,11 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			if (epoll_fds == 0){
 				sceNetEpollDestroy(epollfd);
 				response[1] = 0;
-				sceKernelDelayThread(timeout_usec);
+				if (sceKernelGetSystemTimeWide() - request->op_begin < timeout_usec){
+					// try again
+					break;
+				}
+				request_done = true;
 				break;
 			}
 
@@ -771,15 +1083,23 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			sceNetEpollDestroy(epollfd);
 
 			if (response[1] < 0){
+				request_done = true;
 				break;
 			}
 
+			uint32_t readfds_new[8] = {0};
+			uint32_t writefds_new[8] = {0};
+			uint32_t exceptfds_new[8] = {0};
+
+			bool has_event = false;
 			for (int i = 0;i < response[1];i++){
 				if (events[i].events & SCE_NET_EPOLLIN && readfds != NULL){
-					psp_select_set_fd(readfds, events[i].data.fd, true);
+					has_event = true;
+					psp_select_set_fd(readfds_new, events[i].data.fd, true);
 				}
 				if (events[i].events & SCE_NET_EPOLLOUT && writefds != NULL){
-					psp_select_set_fd(writefds, events[i].data.fd, true);
+					has_event = true;
+					psp_select_set_fd(writefds_new, events[i].data.fd, true);
 				}
 
 				#if LOG_CMD
@@ -792,12 +1112,26 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				#endif
 			}
 
-			if (readfds != NULL)
+			if (!has_event){
+				if (sceKernelGetSystemTimeWide() - request->op_begin < timeout_usec){
+					// wait for next time
+					break;
+				}
+			}
+			request_done = true;
+
+			if (readfds != NULL){
+				memcpy(readfds, readfds_new, sizeof(readfds_new));
 				kermit_pspemu_writeback_cache(readfds, sizeof(uint32_t) * 8);
-			if (writefds != NULL)
+			}
+			if (writefds != NULL){
+				memcpy(writefds, writefds_new, sizeof(writefds_new));
 				kermit_pspemu_writeback_cache(writefds, sizeof(uint32_t) * 8);
-			if (exceptfds != NULL)
+			}
+			if (exceptfds != NULL){
+				memcpy(exceptfds, exceptfds_new, sizeof(exceptfds_new));
 				kermit_pspemu_writeback_cache(exceptfds, sizeof(uint32_t) * 8);
+			}
 
 			#if LOG_CMD
 			LOG("%s: select %d(%d) 0x%x(%s)(%s) 0x%x(%s)(%s) 0x%x 0x%x(%d), 0x%x\n", __func__, nfds, epoll_fds, readfds, readfds_log, readfds_out_log, writefds, writefds_log, writefds_out_log, exceptfds, timeout, timeout_usec, response[1]);
@@ -809,6 +1143,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			response[1] = sceNetSocketAbort(sockfd, 0);
+			request_done = true;
 
 			#if LOG_CMD
 			LOG("%s: SocketAbort 0x%x/0x%x, 0x%x\n", __func__, sockfd, psp_sockfd, response[1]);
@@ -823,6 +1158,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			void *data = request->args[2] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[2], KERMIT_ADDR_MODE_INOUT, 0x24);
 
 			response[1] = sceNetSyscallIoctl_import(sockfd, command, data);
+			request_done = true;
 			if (response[1] >= 0){
 				kermit_pspemu_writeback_cache(data, 0x24);
 			}
@@ -842,25 +1178,29 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 		}
 	}
 
-	if (response[1] < 0 && response[0] != 0){
-		LOG("%s: cmd 0x%x gets error 0x%x\n", __func__, request->cmd, response[0]);
-	}
-
-	if (response[1] < 0 && response[0] == 0){
-		response[0] = __vita_scenet_errno_to_errno(response[1]);
-		response[1] = -1;
-		if (response[0] != EBUSY && response[0] != EAGAIN)
+	if (request_done){
+		if (response[1] < 0 && response[0] != 0 && response[0] != EAGAIN){
 			LOG("%s: cmd 0x%x gets error 0x%x\n", __func__, request->cmd, response[0]);
+		}
+
+		if (response[1] < 0 && response[0] == 0){
+			response[0] = __vita_scenet_errno_to_errno(response[1]);
+			response[1] = -1;
+			if (response[0] != EBUSY && response[0] != EAGAIN)
+				LOG("%s: cmd 0x%x gets error 0x%x\n", __func__, request->cmd, response[0]);
+		}
+
+		request->ret = *(uint64_t*)response;
+		kermit_pspemu_writeback_cache(&request->ret, sizeof(&request->ret));
+
+		asm volatile ("" : : : "memory");
+
+		request->done = true;
+		kermit_pspemu_writeback_cache(&request->done, sizeof(&request->done));
+
+		return true;
 	}
-
-	request->ret = *(uint64_t*)response;
-	kermit_pspemu_writeback_cache(&request->ret, sizeof(&request->ret));
-
-	asm volatile ("" : : : "memory");
-
-	request->done = true;
-	kermit_pspemu_writeback_cache(&request->done, sizeof(&request->done));
-
+	return false;
 }
 
 static int inet_queue_worker(unsigned int args, void *argp){
@@ -873,14 +1213,34 @@ static int inet_queue_worker(unsigned int args, void *argp){
 		// Lock down the worker while working
 		sceKernelLockMutex(worker->mutex, 1, 0);
 
-		for (int i = 0;i < worker->num_requests;i++){
-			handle_request(worker->queue[i], worker);
+		for (int i = 0;i < sizeof(worker->queue) / sizeof(worker->queue[0]);i++){
+			if (worker->queue[i] == NULL){
+				continue;
+			}
+			bool request_done = handle_request(worker->queue[i], worker);
+			if (request_done){
+				worker->queue[i] = NULL;
+				worker->num_requests--;
+			}
 		}
-		worker->num_requests = 0;
 
 		sceKernelUnlockMutex(worker->mutex, 1);
 	}
 
+	return 0;
+}
+
+static int worker_ticker(unsigned int args, void *argp){
+	while (true){
+		for (int i = 0;i < num_workers;i++){
+			sceKernelLockMutex(workers[i].mutex, 1, 0);
+			if (workers[i].num_requests != 0){
+				sceKernelSignalSema(workers[i].sema, 1);
+			}
+			sceKernelUnlockMutex(workers[i].mutex, 1);
+		}
+		sceKernelDelayThread(10000);
+	}
 	return 0;
 }
 
@@ -925,6 +1285,40 @@ int handle_inet_request(SceKermitRequest *request){
 
 	struct request_slot *slot = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_INOUT, sizeof(struct request_slot));
 
+	struct inet_worker *worker = &workers[0];
+
+	while (true){
+		int free_slot = -1;
+		sceKernelLockMutex(worker->mutex, 1, 0);
+		for (int i = 0;i < sizeof(worker->queue) / sizeof(worker->queue[0]);i++){
+			if (worker->queue[i] == NULL){
+				free_slot = i;
+				break;
+			}
+		}
+
+		if (free_slot == -1){
+			// can't queue!
+			sceKernelUnlockMutex(worker->mutex, 1);
+			sceKernelSignalSema(worker->sema, 1);
+			sceKernelDelayThread(1000);
+			continue;
+		}
+
+		worker->queue[free_slot] = slot;
+		slot->op_begin = 0;
+		slot->in_progress = 0;
+		worker->num_requests++;
+		sceKernelUnlockMutex(worker->mutex, 1);
+		sceKernelSignalSema(worker->sema, 1);
+
+		// Work request queued, stop blocking the message pipe
+		kermit_respond_request(KERMIT_MODE_WLAN, request, 0);
+
+		break;
+	}
+
+	#if 0
 	int free_worker = -1;
 	int shortest_queue_worker = -1;
 	for (int i = 0;i < num_workers;i++){
@@ -964,7 +1358,6 @@ int handle_inet_request(SceKermitRequest *request){
 			sceKernelDelayThread(10000);
 			continue;
 		}
-
 		worker->queue[worker->num_requests] = slot;
 		#if 0
 		char args[256];
@@ -986,6 +1379,7 @@ int handle_inet_request(SceKermitRequest *request){
 
 		break;
 	}
+	#endif
 
 	return 1;
 }
@@ -1006,6 +1400,9 @@ int inet_init(){
 		workers[num_workers].should_stop = false;
 		workers[num_workers].busy = false;
 		workers[num_workers].id = i;
+		for(int j = 0;j < sizeof(workers[num_workers].queue) / sizeof(workers[num_workers].queue[0]);j++){
+			workers[num_workers].queue[j] = NULL;
+		}
 
 		workers[num_workers].sema = sceKernelCreateSema("inet worker sema", 0, 0, 65535, NULL);
 		if (workers[num_workers].sema < 0){
@@ -1020,7 +1417,7 @@ int inet_init(){
 			return num_workers;
 		}
 
-		workers[num_workers].tid = sceKernelCreateThread("inet worker", inet_queue_worker, 0x10000100, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_0, NULL);
+		workers[num_workers].tid = sceKernelCreateThread("inet worker", inet_queue_worker, 0x10000100, 0x10000, 0, 0, NULL);
 		if (workers[num_workers].tid < 0){
 			LOG("%s: failed creating queue worker, 0x%x\n", __func__, workers[num_workers].tid);
 			sceKernelDeleteSema(workers[num_workers].sema);
@@ -1039,6 +1436,23 @@ int inet_init(){
 		}
 
 		num_workers++;
+	}
+
+	SceUID tid = sceKernelCreateThread("inet worker ticker", worker_ticker, 0x10000100, 0x10000, 0, 0, NULL);
+	if (tid < 0){
+		LOG("%s: failed creating worker ticker, 0x%x\n", __func__, tid);
+		for(int i = 0;i < num_workers;i++){
+			workers[i].should_stop = true;
+		}
+		return 0;
+	}
+	int start_status = sceKernelStartThread(tid, 0, NULL);
+	if (start_status != 0){
+		LOG("%s: failed starting worker ticker, 0x%x\n", __func__, tid);
+		for(int i = 0;i < num_workers;i++){
+			workers[i].should_stop = true;
+		}
+		return 0;
 	}
 
 	return num_workers;
