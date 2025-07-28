@@ -12,6 +12,7 @@
 #include <errno.h>
 
 #define LOG_CMD 0
+#define NO_P2P_CRYPT 0
 
 struct inet_worker{
 	SceUID sema;
@@ -240,26 +241,35 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 		case KERMIT_INET_SOCKET:{
 			int32_t type = *(int32_t*)&request->args[1];
 			int sockfd = sceNetSocket("pspemu_inet_multithread", SCE_NET_AF_INET, type, 0);
+			if (sockfd < 0){
+				#if LOG_CMD
+				LOG("%s: socket 0x%x, 0x%x\n", __func__, type, sockfd);
+				#endif
+				response[1] = sockfd;
+				request_done = true;
+				break;
+			}
 			int psp_sockfd = map_sockfd(sockfd);
 			if (psp_sockfd == -1){
 				sceNetSocketClose(sockfd);
 				response[1] = -1;
 				response[0] = ENOMEM;
 				request_done = true;
+				#if LOG_CMD
+				LOG("%s: socket 0x%x failed mapping psp socket during socket creation\n", __func__, type);
+				#endif
 				break;
 			}
 			response[1] = psp_sockfd;
 			request_done = true;
-			if (response[1] >= 0){
-				#if LOG_CMD
-				LOG("%s: created socket 0x%x/0x%x with type 0x%x\n", __func__, sockfd, psp_sockfd, type);
-				#endif
-				set_timeo(psp_sockfd, 0, true);
-				set_timeo(psp_sockfd, 0, false);
-				set_nbio(psp_sockfd, false);
-				int opt = 1;
-				sceNetSetsockopt(sockfd, SCE_NET_SOL_SOCKET, SCE_NET_SO_NBIO, &opt, sizeof(opt));
-			}
+			set_timeo(psp_sockfd, 0, true);
+			set_timeo(psp_sockfd, 0, false);
+			set_nbio(psp_sockfd, false);
+			int opt = 1;
+			sceNetSetsockopt(sockfd, SCE_NET_SOL_SOCKET, SCE_NET_SO_NBIO, &opt, sizeof(opt));
+			#if LOG_CMD
+			LOG("%s: socket 0x%x, 0x%x/0x%x\n", __func__, type, sockfd, psp_sockfd);
+			#endif
 
 			break;
 		}
@@ -358,6 +368,9 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 
 			if (!request->in_progress){
 				response[1] = sceNetConnect(sockfd, (void *)&addr, addrlen);
+				#if LOG_CMD
+				LOG("%s: connect initial 0x%x/0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, addr.sin_addr.s_addr, sceNetNtohs(addr.sin_port), sceNetNtohs(addr.sin_vport), response[1]);
+				#endif
 				if (*(uint32_t*)&response[1] == SCE_NET_ERROR_EINPROGRESS){
 					if (!get_nbio(psp_sockfd)){
 						// come back to this later
@@ -393,8 +406,7 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 					if (get_status < 0){
 						LOG("%s: failed getting socket option after connect, 0x%x\n", __func__, get_status);
 						error = get_status;
-					}
-					if (error != 0){
+					}else if (error != 0){
 						error |= 0x80410100;
 					}
 					*(uint32_t*)&response[1] = error;
@@ -426,6 +438,22 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 				request_done = true;
 				break;
 			}
+
+			#if NO_P2P_CRYPT
+			if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_USECRYPTO){
+				LOG("%s: blocked setting SCE_NET_SO_USECRYPTO\n", __func__);
+				response[1] = 0;
+				request_done = true;
+				break;
+			}
+
+			if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_USESIGNATURE){
+				LOG("%s: blocked setting SCE_NET_SO_USESIGNATURE\n", __func__);
+				response[1] = 0;
+				request_done = true;
+				break;
+			}
+			#endif
 
 			// we handle these options
 			if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_SNDTIMEO){
@@ -556,6 +584,10 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t *)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+			#if NO_P2P_CRYPT
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
+			#endif
 
 			if (sockfd == -1){
 				response[1] = -1;
@@ -590,6 +622,10 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t *)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+			#if NO_P2P_CRYPT
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
+			#endif
 
 			if (sockfd == -1){
 				response[1] = -1;
@@ -662,6 +698,10 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 			}
 			// ignore msg_control for now
 			int32_t flags = *(int32_t *)&request->args[2];
+			#if NO_P2P_CRYPT
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
+			#endif
 
 			if (sockfd == -1){
 				response[1] = -1;
@@ -696,6 +736,10 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t*)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+			#if NO_P2P_CRYPT
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
+			#endif
 
 			if (sockfd == -1){
 				response[1] = -1;
@@ -733,6 +777,10 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t*)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, size);
 			int32_t flags = *(int32_t *)&request->args[3];
+			#if NO_P2P_CRYPT
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
+			#endif
 			int32_t *addrlen_in_out = request->args[5] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[5], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			SceNetSockaddrIn *addr_out = request->args[4] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_OUT, *addrlen_in_out);
 
@@ -800,6 +848,10 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 			}
 			// ignore msg_control for now
 			int32_t flags = *(int32_t *)&request->args[2];
+			#if NO_P2P_CRYPT
+			flags = flags & (~SCE_NET_MSG_USECRYPTO);
+			flags = flags & (~SCE_NET_MSG_USESIGNATURE);
+			#endif
 
 			if (sockfd == -1){
 				response[1] = -1;
@@ -1328,6 +1380,9 @@ int handle_inet_request(SceKermitRequest *request){
 		slot->op_begin = 0;
 		slot->in_progress = 0;
 		worker->num_requests++;
+
+		asm volatile ("" : : : "memory");
+
 		sceKernelUnlockMutex(worker->mutex, 1);
 		sceKernelSignalSema(worker->sema, 1);
 
