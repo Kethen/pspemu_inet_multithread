@@ -236,10 +236,6 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 		request->op_begin = sceKernelGetSystemTimeWide();
 	}
 
-	#if LOG_CMD
-	LOG("%s: %d requests\n", __func__, worker->num_requests);
-	#endif
-
 	switch(request->cmd){
 		case KERMIT_INET_SOCKET:{
 			int32_t type = *(int32_t*)&request->args[1];
@@ -436,16 +432,25 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 				set_timeo(psp_sockfd, *(int32_t*)optval, true);
 				response[1] = 0;
 				request_done = true;
+				#if LOG_CMD
+				LOG("%s: setsockopt 0x%x/0x%x 0x%x/0x%x 0x%x/0x%x %d %d, builtin\n", __func__, sockfd, psp_sockfd, level, psp_level, optname, psp_optname, *(int32_t*)optval, optlen);
+				#endif
 				break;
 			}else if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_RCVTIMEO){
 				set_timeo(psp_sockfd, *(int32_t*)optval, false);
 				response[1] = 0;
 				request_done = true;
+				#if LOG_CMD
+				LOG("%s: setsockopt 0x%x/0x%x 0x%x/0x%x 0x%x/0x%x %d %d, builtin\n", __func__, sockfd, psp_sockfd, level, psp_level, optname, psp_optname, *(int32_t*)optval, optlen);
+				#endif
 				break;
 			}else if (level == SCE_NET_SOL_SOCKET && optname == SCE_NET_SO_NBIO){
 				set_nbio(psp_sockfd, *(int32_t*)optval ? true : false);
 				response[1] = 0;
 				request_done = true;
+				#if LOG_CMD
+				LOG("%s: setsockopt 0x%x/0x%x 0x%x/0x%x 0x%x/0x%x %d %d, builtin\n", __func__, sockfd, psp_sockfd, level, psp_level, optname, psp_optname, *(int32_t*)optval, optlen);
+				#endif
 				break;
 			}
 
@@ -748,7 +753,7 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 			}
 
 			#if LOG_CMD
-			LOG("%s: recvfrom 0x%x/0x%x 0x%x %u 0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, addr_out->sin_addr.s_addr, sceNetNtohs(addr_out->sin_port), sceNetNtohs(addr_out->sin_vport), response[1]);
+			LOG("%s: recvfrom 0x%x/0x%x 0x%x %u 0x%x 0x%x %d (%d), 0x%x\n", __func__, sockfd, psp_sockfd, buf, size, flags, addr_out == NULL ? -1 : addr_out->sin_addr.s_addr, addr_out == NULL ? -1 : sceNetNtohs(addr_out->sin_port), addr_out == NULL ? -1 : sceNetNtohs(addr_out->sin_vport), response[1]);
 			#endif
 
 			if (*(uint32_t*)&response[1] == SCE_NET_ERROR_EAGAIN){
@@ -1213,6 +1218,18 @@ static int inet_queue_worker(unsigned int args, void *argp){
 		// Lock down the worker while working
 		sceKernelLockMutex(worker->mutex, 1, 0);
 
+		#if LOG_CMD
+		char log_buf[128] = {0};
+		int log_buf_offset = 0;
+		for (int i = 0;i < sizeof(worker->queue) / sizeof(worker->queue[0]);i++){
+			if (worker->queue[i] == NULL){
+				continue;
+			}
+			log_buf_offset += sprintf(&log_buf[log_buf_offset], "0x%x ", worker->queue[i]->cmd);
+		}
+		LOG("%s: %d requests\n%s\n", __func__, worker->num_requests, log_buf);
+		#endif
+
 		for (int i = 0;i < sizeof(worker->queue) / sizeof(worker->queue[0]);i++){
 			if (worker->queue[i] == NULL){
 				continue;
@@ -1262,6 +1279,8 @@ int handle_inet_request(SceKermitRequest *request){
 				if (close_status != 0){
 					LOG("%s: failed closing socket 0x%x, 0x%x\n", __func__, sockfd_map[i], close_status);
 					num_close_failure++;
+				}else{
+					LOG("%s: closed 0x%x/0x%x\n", __func__, sockfd_map[i], i);
 				}
 				sockfd_map[i] = -1;
 			}
