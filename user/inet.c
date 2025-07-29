@@ -399,7 +399,19 @@ static bool handle_request(struct request_slot *request, struct inet_worker *wor
 					sceNetEpollDestroy(epollfd);
 					break;
 				}
-				if (events == 1 && event.events & SCE_NET_EPOLLOUT){
+				if (events == 0){
+					// no event, try again
+					sceNetEpollDestroy(epollfd);
+					break;
+				}
+				if (events == 1){
+					if (!(event.events & SCE_NET_EPOLLOUT)){
+						// other events, try again
+						sceNetEpollDestroy(epollfd);
+						break;
+					}
+
+					// connect has finished
 					uint32_t error = 0;
 					int optlen = sizeof(error);
 					int get_status = sceNetGetsockopt(sockfd, SCE_NET_SOL_SOCKET, SCE_NET_SO_ERROR, &error, &optlen);
