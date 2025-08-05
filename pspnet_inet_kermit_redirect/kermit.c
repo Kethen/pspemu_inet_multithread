@@ -95,6 +95,10 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	sceKernelDcacheWritebackInvalidateRange(&slot->ret, sizeof(slot->ret));
 	asm volatile ("" : : : "memory");
 
+	int orig_priority = sceKernelGetThreadCurrentPriority();
+	sceKernelChangeThreadPriority(0, 126);
+	asm volatile ("" : : : "memory");
+
 	sceKernelDelayThread(500);
 
 	uint32_t cycles = 0;
@@ -106,6 +110,8 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 		sceKernelDelayThread(nbio ? 500 : cycles < 100 ? 5000 : 200000);
 		cycles++;
 	}
+
+	sceKernelChangeThreadPriority(0, orig_priority);
 
 	pspSdkSetK1(k1);
 
