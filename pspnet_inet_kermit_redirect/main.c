@@ -105,6 +105,7 @@ static int extract_result_and_save_errno(uint64_t error_res){
 	int tid = sceKernelGetThreadId();
 	int empty_slot = -1;
 	int oldest_slot = -1;
+	int interrupts = pspSdkDisableInterrupts();
 	for(int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
 		if (empty_slot == -1 && errnos[i].tid){
 			empty_slot = i;
@@ -115,6 +116,7 @@ static int extract_result_and_save_errno(uint64_t error_res){
 		if (errnos[i].tid == tid){
 			errnos[i].errno = val[0];
 			errnos[i].last_update = sceKernelGetSystemTimeWide();
+			pspSdkEnableInterrupts(interrupts);
 			return val[1];
 		}
 	}
@@ -123,12 +125,14 @@ static int extract_result_and_save_errno(uint64_t error_res){
 		errnos[empty_slot].tid = tid;
 		errnos[empty_slot].errno = val[0];
 		errnos[empty_slot].last_update = sceKernelGetSystemTimeWide();
+		pspSdkEnableInterrupts(interrupts);
 		return val[1];
 	}
 
 	errnos[oldest_slot].tid = tid;
 	errnos[oldest_slot].errno = val[0];
 	errnos[oldest_slot].last_update = sceKernelGetSystemTimeWide();
+	pspSdkEnableInterrupts(interrupts);
 	return val[1];
 }
 
@@ -169,6 +173,10 @@ int sceNetInetAcceptPatched(int sockfd, void *sockaddr, void *addrlen){
 	if (sockaddr != NULL)
 		sceKernelDcacheWritebackInvalidateRange(sockaddr, *(int32_t*)addrlen);
 
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -206,6 +214,11 @@ int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKOPT, 1, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (uint64_t)optlen);
 	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(optval, *(int32_t*)optlen);
+
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -215,6 +228,11 @@ int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKNAME, 1, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
+
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -224,6 +242,11 @@ int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETPEERNAME, 1, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
+
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -294,6 +317,11 @@ int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECV, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
+
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -310,6 +338,11 @@ int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(dest_addr, *(int32_t*)addrlen);
+
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -338,6 +371,11 @@ int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
 		}
 	}
+
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -356,6 +394,11 @@ int sceNetInetPollPatched(struct psp_poll_fd *fds, unsigned int nfds, int timeou
 	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_POLL, 0, (uint64_t)fds, (uint64_t)nfds, (int64_t)timeout);
 	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
+
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -373,6 +416,11 @@ int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *excep
 		sceKernelDcacheWritebackInvalidateRange(writefds, 256);
 	if (exceptfds != NULL)
 		sceKernelDcacheWritebackInvalidateRange(exceptfds, 256);
+
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -388,11 +436,15 @@ int sceNetInetSocketAbortPatched(int sockfd){
 
 int sceNetInetGetErrnoPatched(){
 	int tid = sceKernelGetThreadId();
+	int interrupts = pspSdkDisableInterrupts();
 	for (int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
 		if (errnos[i].tid == tid){
-			return errnos[i].errno;
+			int _errno = errnos[i].errno;
+			pspSdkEnableInterrupts(interrupts);
+			return _errno;
 		}
 	}
+	pspSdkEnableInterrupts(interrupts);
 	LOG("%s: warning, errno not found for thread %d\n", __func__, tid);
 	return 0;
 }
@@ -409,6 +461,11 @@ uint32_t sceNetInet_lib_AEE60F84_patched(int sockfd, uint32_t command, void *dat
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_IOCTL, 1, (int64_t)sockfd, (uint64_t)command, (uint64_t)data);
 	if (data != NULL)
 		sceKernelDcacheWritebackInvalidateRange(data, 0x24);
+
+	asm volatile ("" : : : "memory");
+	sceKernelDelayThread(100);
+	asm volatile ("" : : : "memory");
+
 	return extract_result_and_save_errno(res);
 }
 
@@ -560,10 +617,6 @@ static void replace_functions(SceModule2 *mod){
 		#undef REPLACE_FUNCTION
 
 		rewrite_mod_import(mod, "sceNetInet_lib", 0xAEE60F84, sceNetInet_lib_AEE60F84_patched);
-}
-
-void rehook_inet_disabled(){
-	return;
 }
 
 void rehook_inet(){

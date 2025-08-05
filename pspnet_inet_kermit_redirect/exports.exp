@@ -30,7 +30,7 @@ PSP_EXPORT_FUNC_NID(sceNetInetSocketAbortPatched, 0x114)
 PSP_EXPORT_FUNC_NID(sceNetInetGetErrnoPatched, 0x115)
 PSP_EXPORT_FUNC_NID(sceNetInetGetPspErrorPatched, 0x116)
 
-PSP_EXPORT_FUNC_NID(rehook_inet_disabled, 0x201)
+PSP_EXPORT_FUNC_NID(rehook_inet, 0x201)
 
 PSP_EXPORT_FUNC_NID(sceUtilityLoadModulePatched, 0x301)
 
