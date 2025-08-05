@@ -11,6 +11,7 @@
 #include "hen.h"
 #include "hooking.h"
 #include "kermit.h"
+#include "common.h"
 
 PSP_MODULE_INFO("pspnet_inet_kermit_redirect", PSP_MODULE_KERNEL, 1, 0);
 
@@ -170,12 +171,13 @@ int sceNetInetAcceptPatched(int sockfd, void *sockaddr, void *addrlen){
 
 	if (addrlen != NULL)
 		sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+
+	CACHE_BARRIER();
+
 	if (sockaddr != NULL)
 		sceKernelDcacheWritebackInvalidateRange(sockaddr, *(int32_t*)addrlen);
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
@@ -215,9 +217,7 @@ int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval
 	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
 	sceKernelDcacheWritebackInvalidateRange(optval, *(int32_t*)optlen);
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
@@ -227,11 +227,12 @@ int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKNAME, 1, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+
+	CACHE_BARRIER();
+
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
@@ -241,11 +242,12 @@ int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETPEERNAME, 1, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+
+	CACHE_BARRIER();
+
 	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
@@ -318,9 +320,7 @@ int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECV, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
@@ -337,11 +337,12 @@ int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVFROM, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (uint64_t)addrlen);
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
+
+	CACHE_BARRIER();
+
 	sceKernelDcacheWritebackInvalidateRange(dest_addr, *(int32_t*)addrlen);
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
@@ -372,9 +373,7 @@ int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 		}
 	}
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
@@ -395,9 +394,7 @@ int sceNetInetPollPatched(struct psp_poll_fd *fds, unsigned int nfds, int timeou
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_POLL, 0, (uint64_t)fds, (uint64_t)nfds, (int64_t)timeout);
 	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
@@ -417,9 +414,7 @@ int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *excep
 	if (exceptfds != NULL)
 		sceKernelDcacheWritebackInvalidateRange(exceptfds, 256);
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
@@ -462,22 +457,23 @@ uint32_t sceNetInet_lib_AEE60F84_patched(int sockfd, uint32_t command, void *dat
 	if (data != NULL)
 		sceKernelDcacheWritebackInvalidateRange(data, 0x24);
 
-	asm volatile ("" : : : "memory");
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	return extract_result_and_save_errno(res);
 }
 
 static void track_module(SceModule2 *mod){
+	int interrupts = pspSdkDisableInterrupts();
 	for (int i = 0;i < sizeof(tracked_modules) / sizeof(tracked_modules[0]);i++){
 		if (strcmp(mod->modname, tracked_modules[i].name) == 0){
-			LOG("%s: keeping track of %s\n", __func__, tracked_modules[i].name);
 			tracked_modules[i].mod = *mod;
 			tracked_modules[i].found = true;
+			pspSdkEnableInterrupts(interrupts);
+			LOG("%s: keeping track of %s\n", __func__, mod->modname);
 			break;
 		}
 	}
+	pspSdkEnableInterrupts(interrupts);
 }
 
 int sceKernelQuerySystemCall(void *function);
@@ -621,6 +617,9 @@ static void replace_functions(SceModule2 *mod){
 
 void rehook_inet(){
 	//LOG("%s: inet rehook triggered\n", __func__);
+
+	int interrupts = pspSdkDisableInterrupts();
+
 	if (game_module_found){
 		replace_functions(&game_module);
 	}
@@ -647,6 +646,8 @@ void rehook_inet(){
 		//LOG("%s: hooking %s\n", __func__, tracked_modules[i].name);
 		replace_functions(&tracked_modules[i].mod);
 	}
+
+	pspSdkEnableInterrupts(interrupts);
 }
 
 static int (*sceUtilityLoadModuleOrig)(int modname) = sceUtilityLoadModule;

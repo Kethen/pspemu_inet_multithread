@@ -14,7 +14,7 @@
 #include "kermit.h"
 #include "inet.h"
 
-#define DUMP 1
+#define DUMP 0
 
 static tai_hook_ref_t sceKernelCreateThreadRef = {0};
 static tai_hook_ref_t kermit_wait_and_get_request_ref = {0};

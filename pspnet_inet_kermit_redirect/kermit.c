@@ -7,8 +7,8 @@
 #include <pspthreadman.h>
 
 #include "kermit.h"
-
 #include "log.h"
+#include "common.h"
 
 // references https://github.com/TheOfficialFloW/Adrenaline/blob/7d382b7837d9d211d830017ba7aee982fa49a8c6/cef/systemctrl/adrenaline.c#L55-L68
 
@@ -83,9 +83,8 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 
 	int k1 = pspSdkSetK1(0);
 	sceKernelDcacheWritebackInvalidateRange(slot, sizeof(struct request_slot));
-	sceKernelDelayThread(100);
 
-	asm volatile ("" : : : "memory");
+	CACHE_BARRIER();
 
 	uint64_t response = 0;
 	sceKermitSendRequest661(request_uncached, mode, cmd, 14, 0, &response);
@@ -109,11 +108,10 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	}
 
 	pspSdkSetK1(k1);
-	sceKernelDelayThread(100);
-	asm volatile ("" : : : "memory");
+
+	CACHE_BARRIER();
 
 	uint64_t ret = slot->ret;
-
 	asm volatile ("" : : : "memory");
 
 	free_request_slot(slot);
