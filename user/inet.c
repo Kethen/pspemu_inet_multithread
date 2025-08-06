@@ -26,6 +26,9 @@ struct inet_worker{
 
 struct inet_worker workers[32] = {0};
 static int num_workers = 0;
+static int32_t *done_psp_thread_addr_psp = NULL;
+static int32_t *done_psp_thread_addr = NULL;
+static SceUID done_psp_thread_addr_mutex = -1;
 
 // the vita can do up to 1024 sockets?
 int32_t sockfd_map[255];
@@ -861,6 +864,24 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 	request->done = true;
 	kermit_pspemu_writeback_cache(&request->done, sizeof(&request->done));
 
+	asm volatile ("" : : : "memory");
+
+	sceKernelLockMutex(done_psp_thread_addr_mutex, 1, 0);
+	if (done_psp_thread_addr != NULL){
+		kermit_get_pspemu_addr_from_psp_addr(done_psp_thread_addr_psp, KERMIT_ADDR_MODE_INOUT, sizeof(struct request_slot));
+		asm volatile ("" : : : "memory");
+		*done_psp_thread_addr = request->psp_thread;
+		asm volatile ("" : : : "memory");
+		kermit_pspemu_writeback_cache(done_psp_thread_addr, sizeof(int32_t));
+		asm volatile ("" : : : "memory");
+		sceCompatInterrupt(KERMIT_VINTR_CUSTOM);
+		// interrupt does not seem to block on this side, so we wait till the other side is done with the value
+		while(*done_psp_thread_addr != -1){
+			kermit_get_pspemu_addr_from_psp_addr(done_psp_thread_addr_psp, KERMIT_ADDR_MODE_INOUT, sizeof(struct request_slot));
+			sceKernelDelayThread(500);
+		}
+	}
+	sceKernelUnlockMutex(done_psp_thread_addr_mutex, 1);
 }
 
 static int inet_queue_worker(unsigned int args, void *argp){
@@ -908,10 +929,14 @@ int handle_inet_request(SceKermitRequest *request){
 		}
 		sceKernelUnlockMutex(sockfd_map_mutex, 1);
 		LOG("%s: command 0x%x, closed %d active psp socket(s), %d socket(s) refused to close\n", __func__, request->cmd, num_active_psp_sockets, num_close_failure);
+
+		sceKernelLockMutex(done_psp_thread_addr_mutex, 1, 0);
+		done_psp_thread_addr = NULL;
+		sceKernelUnlockMutex(done_psp_thread_addr_mutex, 1);
 		return 0;
 	}
 
-	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SOCKET_IOCTL){
+	if (request->cmd < KERMIT_INET_SOCKET || request->cmd > KERMIT_INET_SET_DONE_PSP_THREAD_ADDR){
 		#if LOG_CMD
 		char args[256];
 		int offset = 0;
@@ -921,6 +946,16 @@ int handle_inet_request(SceKermitRequest *request){
 		LOG("%s: unhandled cmd 0x%x, %s\n", __func__, request->cmd, args);
 		#endif
 		return 0;
+	}
+
+	if (request->cmd == KERMIT_INET_SET_DONE_PSP_THREAD_ADDR){
+		sceKernelLockMutex(done_psp_thread_addr_mutex, 1, 0);
+		done_psp_thread_addr_psp = *(uint32_t*)&request->args[0];
+		done_psp_thread_addr = kermit_get_pspemu_addr_from_psp_addr(done_psp_thread_addr_psp, KERMIT_ADDR_MODE_INOUT, sizeof(struct request_slot));
+		LOG("%s: setting done psp thread addr to 0x%x/0x%x\n", __func__, done_psp_thread_addr, *(uint32_t*)&request->args[0]);
+		sceKernelUnlockMutex(done_psp_thread_addr_mutex, 1);
+		kermit_respond_request(KERMIT_MODE_WLAN, request, 0);
+		return 1;
 	}
 
 	struct request_slot *slot = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_INOUT, sizeof(struct request_slot));
@@ -994,6 +1029,12 @@ int inet_init(){
 	sockfd_map_mutex = sceKernelCreateMutex("inet sockfd remap mutex", 0, 0, NULL);
 	if (sockfd_map_mutex < 0){
 		LOG("%s: failed initializing sockfd map mutex, 0x%x\n", __func__, sockfd_map_mutex);
+		return 0;
+	}
+
+	done_psp_thread_addr_mutex = sceKernelCreateMutex("inet done psp thread addr mutex", 0, 0, NULL);
+	if (done_psp_thread_addr_mutex < 0){
+		LOG("%s: failed initializing done psp thread addr mutex, 0x%x\n", __func__, done_psp_thread_addr_mutex);
 		return 0;
 	}
 

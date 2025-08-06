@@ -46,6 +46,10 @@ typedef enum kermit_wlan_custom_command{
 	KERMIT_INET_CLOSE_WITH_RST,
 	KERMIT_INET_SOCKET_ABORT, // 0x14
 	KERMIT_INET_SOCKET_IOCTL,
+	KERMIT_INET_SET_DONE_PSP_THREAD_ADDR,
 }kermit_wlan_custom_command;
+
+// 0xc is documented as KERMIT_VIRTUAL_INTR_USBGPS_CH1 in Adrenaline
+#define KERMIT_VINTR_CUSTOM 0xc
 
 #endif

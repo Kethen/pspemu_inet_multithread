@@ -15,7 +15,7 @@ PSP_FW_VERSION=661
 
 LDFLAGS = -nostartfiles
 
-LIBS = -lpsputility
+LIBS = -lpsputility -lpsppower
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build_prx.mak

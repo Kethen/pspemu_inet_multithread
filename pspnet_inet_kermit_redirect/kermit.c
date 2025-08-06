@@ -14,12 +14,12 @@
 
 #define ALIGN(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
 
-int sceKermitSendRequest661(SceKermitRequest *request, uint32_t mode, uint32_t cmd, uint32_t args, uint32_t is_callback, uint64_t *resp);
-
 #define LOG_REQUESTS 0
 
 // get around the message pipe architecture, at least going by https://github.com/DaveeFTW/vita_kermit/blob/90334991fcf2b93c42cdf767d60b825ccee9d1b1/kermit.c#L48-L165
 struct request_slot request_slots[16];
+
+int32_t done_psp_thread = -1;
 
 static struct request_slot *reserve_request_slot(){
 	while(true){
@@ -41,6 +41,33 @@ static void free_request_slot(struct request_slot *slot){
 	int interrupts = pspSdkDisableInterrupts();
 	slot->in_use = false;
 	pspSdkEnableInterrupts(interrupts);
+}
+
+void kermit_setup(){
+	LOG("%s: done_psp_thread at 0x%x\n", __func__, &done_psp_thread);
+
+	static char request_buf[sizeof(SceKermitRequest) + 0x40];
+	memset(request_buf, 0, sizeof(request_buf));
+	SceKermitRequest *request_aligned = (SceKermitRequest *)ALIGN((u32)request_buf, 0x40);
+	SceKermitRequest *request_uncached = (SceKermitRequest *)((u32)request_aligned | 0x20000000);
+
+	request_aligned->cmd = KERMIT_INET_SET_DONE_PSP_THREAD_ADDR;
+	request_aligned->args[0] = (uint32_t)&done_psp_thread;
+	sceKernelDcacheWritebackInvalidateRange(request_buf, sizeof(request_buf));
+
+	CACHE_BARRIER();
+
+	uint64_t response = 0;
+	sceKermitSendRequest661(request_uncached, KERMIT_MODE_WLAN, KERMIT_INET_SET_DONE_PSP_THREAD_ADDR, 14, 0, &response);
+}
+
+void kermit_wakeup_thread(){
+	sceKernelDcacheWritebackInvalidateRange(&done_psp_thread, sizeof(done_psp_thread));
+	CACHE_BARRIER();
+	sceKernelWakeupThread(done_psp_thread);
+	done_psp_thread = -1;
+	asm volatile ("" : : : "memory");
+	sceKernelDcacheWritebackInvalidateRange(&done_psp_thread, sizeof(done_psp_thread));
 }
 
 uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbio, ...){
@@ -88,6 +115,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 
 	uint64_t response = 0;
 	sceKermitSendRequest661(request_uncached, mode, cmd, 14, 0, &response);
+	sceKernelSleepThread();
 
 	asm volatile ("" : : : "memory");
 
@@ -95,9 +123,13 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	sceKernelDcacheWritebackInvalidateRange(&slot->ret, sizeof(slot->ret));
 	asm volatile ("" : : : "memory");
 
+	#define CHANGE_PRIORITY 0
+
+	#if CHANGE_PRIORITY
 	int orig_priority = sceKernelGetThreadCurrentPriority();
 	sceKernelChangeThreadPriority(0, 126);
 	asm volatile ("" : : : "memory");
+	#endif
 
 	sceKernelDelayThread(500);
 
@@ -111,7 +143,9 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 		cycles++;
 	}
 
+	#if CHANGE_PRIORITY
 	sceKernelChangeThreadPriority(0, orig_priority);
+	#endif
 
 	pspSdkSetK1(k1);
 

@@ -14,5 +14,7 @@ PSP_EBOOT_TITLE = inet test
 
 PSP_LARGE_MEMORY = 0
 
+LIBS = -lpsppower
+
 PSPSDK=$(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak

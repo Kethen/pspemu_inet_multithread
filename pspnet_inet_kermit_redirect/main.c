@@ -3,6 +3,8 @@
 #include <pspthreadman.h>
 #include <psputility_modules.h>
 #include <psputility_netmodules.h>
+#include <psppower.h>
+#include <psploadexec.h>
 
 #include <string.h>
 #include <stdbool.h>
@@ -615,6 +617,26 @@ static void replace_functions(SceModule2 *mod){
 		rewrite_mod_import(mod, "sceNetInet_lib", 0xAEE60F84, sceNetInet_lib_AEE60F84_patched);
 }
 
+
+SceUID interrupt_handler_sema = -1;
+void sctrlKernelExitVSH();
+int kermit_interrupt_handler(){
+	// it seems that you can't really do much on the handler
+	// can't exit game, can't log, but it can at least feed semaphores
+	sceKernelSignalSema(interrupt_handler_sema, 1);
+	return 0;
+}
+
+int kermit_handler_thread_func(SceSize args, void *argp){
+	LOG("%s: thread  started\n", __func__);
+	while(1){
+		sceKernelWaitSema(interrupt_handler_sema, 1, NULL);
+		//LOG("%s: interrupt fired\n", __func__);
+		CACHE_BARRIER();
+		kermit_wakeup_thread();
+	}
+}
+
 void rehook_inet(){
 	//LOG("%s: inet rehook triggered\n", __func__);
 
@@ -794,6 +816,19 @@ int module_start(SceSize args, void * argp){
 	}
 
 	last_handler = sctrlHENSetStartModuleHandler(apply_patch);
+
+	LOG("%s: cpu clock %d bus clock %d\n", __func__, scePowerGetCpuClockFrequencyInt(), scePowerGetBusClockFrequencyInt());
+
+	sceKermitRegisterVirtualIntrHandler661(KERMIT_VINTR_CUSTOM, kermit_interrupt_handler);
+
+	interrupt_handler_sema = sceKernelCreateSema("pspnet_inet_kermit_redirect interrupt", 0, 0, 1000, NULL);
+	SceUID thid = sceKernelCreateThread("pspnet_inet_kermit_redirect interrupt thread", kermit_handler_thread_func, 0x10, 0x4000, 0, NULL);
+	sceKernelStartThread(thid, 0, NULL);
+	if (thid < 0){
+		LOG("%s: failed creating interrupt thread, 0x%x, this is fatal\n", __func__, thid);
+	}
+
+	kermit_setup();
 
 	return 0;
 }

@@ -7,6 +7,7 @@
 #include <pspnet_inet.h>
 #include <pspnet_resolver.h>
 #include <psputility_netmodules.h>
+#include <psppower.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
@@ -701,6 +702,8 @@ int test_thread(SceSize args, void *argp){
 int main(void) {
 	INIT_LOG();
 	SetupCallbacks();
+
+	LOG("%s: cpu clock %d bus clock %d\n", __func__, scePowerGetCpuClockFrequencyInt(), scePowerGetBusClockFrequencyInt());
 
 	int tid = sceKernelCreateThread("test_thread", test_thread, 0x18, 0x10000, 0, NULL);
 	if (tid < 0){

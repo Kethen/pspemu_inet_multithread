@@ -9,5 +9,10 @@ extern SceLwMutexWorkarea request_slots_mutex;
 uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbio, ...);
 #define kermit_send_request(mode, cmd, nbio, ...) _kermit_send_request(mode, cmd, sizeof((uint64_t[]){__VA_ARGS__}) / sizeof(uint64_t), nbio, __VA_ARGS__)
 #define kermit_send_wlan_request(...) kermit_send_request(KERMIT_MODE_WLAN, __VA_ARGS__)
+void kermit_wakeup_thread();
+void kermit_setup();
+
+int sceKermitSendRequest661(SceKermitRequest *request, uint32_t mode, uint32_t cmd, uint32_t args, uint32_t is_callback, uint64_t *resp);
+int sceKermitRegisterVirtualIntrHandler661(int num, int (* handler)());
 
 #endif

@@ -30,6 +30,7 @@ target_link_libraries(pspemu_inet_multithread
 	SceKernelThreadMgr_stub
 	SceNet_stub_weak
 	SceSysmodule_stub
+	SceCompat_stub_weak
 )
 
 
