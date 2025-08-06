@@ -99,7 +99,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	sceKernelChangeThreadPriority(0, 126);
 	asm volatile ("" : : : "memory");
 
-	sceKernelDelayThread(500);
+	sceKernelDelayThread(50);
 
 	uint32_t cycles = 0;
 	while (!slot->done){
@@ -107,7 +107,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 		sceKernelDcacheWritebackInvalidateRange(&slot->ret, sizeof(slot->ret));
 		asm volatile ("" : : : "memory");
 
-		sceKernelDelayThread(nbio ? 500 : cycles < 100 ? 5000 : 200000);
+		sceKernelDelayThread(nbio ? 50 : cycles < 100 ? 5000 : 200000);
 		cycles++;
 	}
 
