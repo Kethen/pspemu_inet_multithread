@@ -85,7 +85,15 @@ struct tracked_module tracked_modules[] = {
 		.mod = {0},
 		.name = "sceNetUpnp_Library",
 		.found = false
-	}
+	},
+	#endif
+
+	#if 1
+	{
+		.mod = {0},
+		.name = "gamespy_sdk",
+		.found = false
+	},
 	#endif
 };
 
