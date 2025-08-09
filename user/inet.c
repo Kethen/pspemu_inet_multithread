@@ -247,7 +247,11 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			SceNetSockaddrIn *addr_out = request->args[1] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, sizeof(SceNetSockaddrIn));
 			int32_t *addrlen_in_out = request->args[2] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
-			int accept_sockfd = sceNetAccept(sockfd, (void *)addr_out, addrlen_in_out);
+
+			SceNetSockaddrIn addr_out_vita = {0};
+			int32_t addrlen_in_out_vita = addrlen_in_out != NULL ? *addrlen_in_out : sizeof(SceNetSockaddrIn);
+
+			int accept_sockfd = sceNetAccept(sockfd, (void *)&addr_out_vita, &addrlen_in_out_vita);
 			if (accept_sockfd < 0){
 				response[1] = accept_sockfd;
 				break;
@@ -260,10 +264,14 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				break;
 			}
 			response[1] = psp_accept_sockfd;
-			if (addr_out != NULL)
-				kermit_pspemu_writeback_cache(addr_out, sizeof(SceNetSockaddrIn));
-			if (addrlen_in_out != NULL)
+			if (addr_out != NULL && addrlen_in_out != NULL){
+				sceDmacMemcpy(addr_out, &addr_out_vita, *addrlen_in_out);
+				kermit_pspemu_writeback_cache(addr_out, *addrlen_in_out);
+			}
+			if (addrlen_in_out != NULL){
+				sceDmacMemcpy(addrlen_in_out, &addrlen_in_out_vita, sizeof(addrlen_in_out_vita));
 				kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(int32_t));
+			}
 
 			#if LOG_CMD
 			LOG("%s: accept 0x%x/0x%x -> 0x%x/0x%x from 0x%x %d (%d)\n", __func__, sockfd, psp_sockfd, accept_sockfd, psp_accept_sockfd, addr_out->sin_addr.s_addr, sceNetNtohs(addr_out->sin_port), sceNetNtohs(addr_out->sin_vport));
@@ -327,8 +335,15 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			translate_sockopt(psp_level, psp_optname, &level, &optname);
 			int32_t *optlen_in_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			void *optval_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[3], KERMIT_ADDR_MODE_OUT, *optlen_in_out);
-			response[1] = sceNetGetsockopt(sockfd, level, optname, optval_out, optlen_in_out);
+
+			int32_t optlen_in_out_vita = *optlen_in_out;
+			uint8_t opt_buf[32] = {0};
+
+			response[1] = sceNetGetsockopt(sockfd, level, optname, opt_buf, &optlen_in_out_vita);
+
 			if (response[1] >= 0){
+				sceDmacMemcpy(optlen_in_out, &optlen_in_out_vita, sizeof(int32_t));
+				sceDmacMemcpy(optval_out, opt_buf, optlen_in_out_vita);
 				kermit_pspemu_writeback_cache(optlen_in_out, sizeof(int32_t));
 				kermit_pspemu_writeback_cache(optval_out, *optlen_in_out);
 			}
@@ -352,8 +367,15 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			int32_t *addrlen_in_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			SceNetSockaddrIn *addr_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, *addrlen_in_out);
-			response[1] = sceNetGetsockname(sockfd, (void *)addr_out, addrlen_in_out);
+
+			SceNetSockaddrIn addr_out_vita = {0};
+			int32_t addrlen_in_out_vita = *addrlen_in_out;
+
+			response[1] = sceNetGetsockname(sockfd, (void *)&addr_out_vita, &addrlen_in_out_vita);
+
 			if (response[1] >= 0){
+				sceDmacMemcpy(addr_out, &addr_out_vita, *addrlen_in_out);
+				sceDmacMemcpy(addrlen_in_out, &addrlen_in_out_vita, sizeof(int32_t));
 				kermit_pspemu_writeback_cache(addr_out, *addrlen_in_out);
 				kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(uint32_t));
 			}
@@ -365,8 +387,15 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			int32_t *addrlen_in_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			SceNetSockaddrIn *addr_out = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, *addrlen_in_out);
-			response[1] = sceNetGetpeername(sockfd, (void *)addr_out, addrlen_in_out);
+
+			SceNetSockaddrIn addr_out_vita = {0};
+			int32_t addrlen_in_out_vita = *addrlen_in_out;
+
+			response[1] = sceNetGetpeername(sockfd, (void *)&addr_out_vita, &addrlen_in_out_vita);
+
 			if (response[1] >= 0){
+				sceDmacMemcpy(addr_out, &addr_out_vita, *addrlen_in_out);
+				sceDmacMemcpy(addrlen_in_out, &addrlen_in_out_vita, sizeof(int32_t));
 				kermit_pspemu_writeback_cache(addr_out, *addrlen_in_out);
 				kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(uint32_t));
 			}
@@ -459,8 +488,13 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			uint32_t size = *(uint32_t*)&request->args[2];
 			void *buf = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, size);
 			int32_t flags = *(int32_t *)&request->args[3];
-			response[1] = sceNetRecv(sockfd, buf, size, flags);
+
+			uint8_t buf_vita[1024 * 256] = {0};
+
+			response[1] = sceNetRecv(sockfd, buf_vita, size, flags);
+
 			if (response[1] >= 0){
+				sceDmacMemcpy(buf, buf_vita, size);
 				kermit_pspemu_writeback_cache(buf, size);
 			}
 
@@ -478,13 +512,24 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t flags = *(int32_t *)&request->args[3];
 			int32_t *addrlen_in_out = request->args[5] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[5], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
 			SceNetSockaddrIn *addr_out = request->args[4] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[4], KERMIT_ADDR_MODE_OUT, *addrlen_in_out);
-			response[1] = sceNetRecvfrom(sockfd, buf, size, flags, (void *)addr_out, addrlen_in_out);
+
+			SceNetSockaddrIn addr_out_vita = {0};
+			int32_t addrlen_in_out_vita = addrlen_in_out != NULL ? *addrlen_in_out : sizeof(SceNetSockaddrIn);
+			uint8_t buf_vita[1024 * 256] = {0};
+
+			response[1] = sceNetRecvfrom(sockfd, buf_vita, size, flags, (void *)&addr_out_vita, &addrlen_in_out_vita);
+
 			if (response[1] >= 0){
+				sceDmacMemcpy(buf, buf_vita, size);
 				kermit_pspemu_writeback_cache(buf, size);
-				if (addrlen_in_out != NULL)
-					kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(int32_t));
-				if (addrlen_in_out != NULL && addr_out != NULL)
+				if (addrlen_in_out != NULL && addr_out != NULL){
+					sceDmacMemcpy(addr_out, &addr_out_vita, *addrlen_in_out);
 					kermit_pspemu_writeback_cache(addr_out, *addrlen_in_out);
+				}
+				if (addrlen_in_out != NULL){
+					sceDmacMemcpy(addrlen_in_out, &addrlen_in_out_vita, sizeof(int32_t));
+					kermit_pspemu_writeback_cache(addrlen_in_out, sizeof(int32_t));
+				}
 			}
 
 			#if LOG_CMD
@@ -494,6 +539,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			break;
 		}
 		case KERMIT_INET_RECVMSG:{
+			// TODO use sceDmacMemcpy, is there a good way to allocate buffers without using malloc?
 			int32_t psp_sockfd = *(int32_t *)&request->args[0];
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			SceNetMsghdr *psp_msg = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_IN, sizeof(SceNetMsghdr));
@@ -560,6 +606,12 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			struct psp_poll_fd *fds = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_INOUT, nfds * sizeof(struct psp_poll_fd));
 			int32_t timeout = *(int32_t*)&request->args[2];
 
+			struct psp_poll_fd fds_vita[255];
+			memcpy(fds_vita, fds, sizeof(struct psp_poll_fd) * nfds);
+			for (int i = 0;i < nfds;i++){
+				fds_vita[i].revents = 0;
+			}
+
 			SceNetEpollEvent events[255] = {0};
 
 			if (nfds > sizeof(events) / sizeof(SceNetEpollEvent)){
@@ -612,7 +664,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 
 				int sockfd = get_sockfd(fds[i].sockfd);
 				if (sockfd == -1){
-					fds[i].revents |= POLLNVAL;
+					fds_vita[i].revents |= POLLNVAL;
 					continue;
 				}
 
@@ -649,25 +701,26 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 
 			for (int i = 0;i < response[1];i++){
 				if (events[i].events & SCE_NET_EPOLLIN){
-					fds[events[i].data.fd].revents |= POLLIN | POLLRDNORM;
+					fds_vita[events[i].data.fd].revents |= POLLIN | POLLRDNORM;
 					#if LOG_CMD
-					poll_in_rlog_offset += sprintf(&poll_in_rlog[poll_in_rlog_offset], "0x%x ", fds[events[i].data.fd].sockfd);
+					poll_in_rlog_offset += sprintf(&poll_in_rlog[poll_in_rlog_offset], "0x%x ", fds_vita[events[i].data.fd].sockfd);
 					#endif
 				}
 				if (events[i].events & SCE_NET_EPOLLOUT){
-					fds[events[i].data.fd].revents |= POLLOUT;
+					fds_vita[events[i].data.fd].revents |= POLLOUT;
 					#if LOG_CMD
-					poll_out_rlog_offset += sprintf(&poll_out_rlog[poll_out_rlog_offset], "0x%x ", fds[events[i].data.fd].sockfd);
+					poll_out_rlog_offset += sprintf(&poll_out_rlog[poll_out_rlog_offset], "0x%x ", fds_vita[events[i].data.fd].sockfd);
 					#endif
 				}
 				if (events[i].events & SCE_NET_EPOLLERR){
-					fds[events[i].data.fd].revents |= POLLERR;
+					fds_vita[events[i].data.fd].revents |= POLLERR;
 				}
 				if (events[i].events & SCE_NET_EPOLLHUP){
-					fds[events[i].data.fd].revents |= POLLHUP;
+					fds_vita[events[i].data.fd].revents |= POLLHUP;
 				}
 			}
 
+			sceDmacMemcpy(fds, fds_vita, sizeof(struct psp_poll_fd) * nfds);
 			kermit_pspemu_writeback_cache(fds, nfds * sizeof(struct psp_poll_fd));
 
 			#if LOG_CMD
@@ -720,15 +773,10 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				// only do these for now, since they map correctly to epoll
 				if (readfds != NULL && psp_select_fd_is_set(readfds, i)){
 					event.events |= SCE_NET_EPOLLIN;
-					psp_select_set_fd(readfds, i, false);
 				}
 				if (writefds != NULL && psp_select_fd_is_set(writefds, i)){
 					event.events |= SCE_NET_EPOLLOUT;
-					psp_select_set_fd(writefds, i, false);
 				}
-				// hm, what about exceptfds
-				if (exceptfds != NULL)
-					psp_select_set_fd(exceptfds, i, false);
 
 				if (event.events == 0){
 					continue;
@@ -774,12 +822,16 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				break;
 			}
 
+			uint32_t readfds_vita[8] = {0};
+			uint32_t writefds_vita[8] = {0};
+			uint32_t exceptfds_vita[8] = {0};
+
 			for (int i = 0;i < response[1];i++){
 				if (events[i].events & SCE_NET_EPOLLIN && readfds != NULL){
-					psp_select_set_fd(readfds, events[i].data.fd, true);
+					psp_select_set_fd(readfds_vita, events[i].data.fd, true);
 				}
 				if (events[i].events & SCE_NET_EPOLLOUT && writefds != NULL){
-					psp_select_set_fd(writefds, events[i].data.fd, true);
+					psp_select_set_fd(writefds_vita, events[i].data.fd, true);
 				}
 
 				#if LOG_CMD
@@ -792,12 +844,18 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 				#endif
 			}
 
-			if (readfds != NULL)
+			if (readfds != NULL){
+				sceDmacMemcpy(readfds, readfds_vita, sizeof(uint32_t) * 8);
 				kermit_pspemu_writeback_cache(readfds, sizeof(uint32_t) * 8);
-			if (writefds != NULL)
+			}
+			if (writefds != NULL){
+				sceDmacMemcpy(writefds, writefds_vita, sizeof(uint32_t) * 8);
 				kermit_pspemu_writeback_cache(writefds, sizeof(uint32_t) * 8);
-			if (exceptfds != NULL)
+			}
+			if (exceptfds != NULL){
+				sceDmacMemcpy(exceptfds, exceptfds_vita, sizeof(uint32_t) * 8);
 				kermit_pspemu_writeback_cache(exceptfds, sizeof(uint32_t) * 8);
+			}
 
 			#if LOG_CMD
 			LOG("%s: select %d(%d) 0x%x(%s)(%s) 0x%x(%s)(%s) 0x%x 0x%x(%d), 0x%x\n", __func__, nfds, epoll_fds, readfds, readfds_log, readfds_out_log, writefds, writefds_log, writefds_out_log, exceptfds, timeout, timeout_usec, response[1]);
@@ -1020,7 +1078,7 @@ int inet_init(){
 			return num_workers;
 		}
 
-		workers[num_workers].tid = sceKernelCreateThread("inet worker", inet_queue_worker, 0x10000100, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_0, NULL);
+		workers[num_workers].tid = sceKernelCreateThread("inet worker", inet_queue_worker, 0x10000100, 1024 * 512, 0, SCE_KERNEL_CPU_MASK_USER_0, NULL);
 		if (workers[num_workers].tid < 0){
 			LOG("%s: failed creating queue worker, 0x%x\n", __func__, workers[num_workers].tid);
 			sceKernelDeleteSema(workers[num_workers].sema);
