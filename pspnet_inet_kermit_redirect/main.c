@@ -399,7 +399,7 @@ struct psp_poll_fd{
 
 int sceNetInetPollPatched(struct psp_poll_fd *fds, unsigned int nfds, int timeout){
 	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_POLL, 0, (uint64_t)fds, (uint64_t)nfds, (int64_t)timeout);
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_POLL, timeout == 0 ? 1 : 0, (uint64_t)fds, (uint64_t)nfds, (int64_t)timeout);
 	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
 
 	CACHE_BARRIER();
@@ -407,20 +407,31 @@ int sceNetInetPollPatched(struct psp_poll_fd *fds, unsigned int nfds, int timeou
 	return extract_result_and_save_errno(res);
 }
 
-int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *exceptfds, void *timeout){
+struct psp_select_timeval{
+	uint32_t tv_sec;
+	uint32_t tv_usec;
+};
+
+int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *exceptfds, struct psp_select_timeval *timeout){
 	if (readfds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(readfds, 256);
+		sceKernelDcacheWritebackInvalidateRange(readfds, sizeof(uint32_t) * 8);
 	if (writefds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(writefds, 256);
+		sceKernelDcacheWritebackInvalidateRange(writefds, sizeof(uint32_t) * 8);
 	if (exceptfds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(exceptfds, 256);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SELECT, 0, (int64_t)nfds, (uint64_t)readfds, (uint64_t)writefds, (uint64_t)exceptfds, (uint64_t)timeout);
+		sceKernelDcacheWritebackInvalidateRange(exceptfds, sizeof(uint32_t) * 8);
+	if (timeout != NULL)
+		sceKernelDcacheWritebackInvalidateRange(timeout, sizeof(struct psp_select_timeval));
+	int nbio = 0;
+	if (timeout != NULL && timeout->tv_sec == 0 && timeout->tv_usec == 0){
+		nbio = 1;
+	}
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SELECT, nbio, (int64_t)nfds, (uint64_t)readfds, (uint64_t)writefds, (uint64_t)exceptfds, (uint64_t)timeout);
 	if (readfds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(readfds, 256);
+		sceKernelDcacheWritebackInvalidateRange(readfds, sizeof(uint32_t) * 8);
 	if (writefds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(writefds, 256);
+		sceKernelDcacheWritebackInvalidateRange(writefds, sizeof(uint32_t) * 8);
 	if (exceptfds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(exceptfds, 256);
+		sceKernelDcacheWritebackInvalidateRange(exceptfds, sizeof(uint32_t) * 8);
 
 	CACHE_BARRIER();
 
