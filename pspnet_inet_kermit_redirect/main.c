@@ -25,6 +25,7 @@ struct errno_slot{
 
 uint32_t nbio_field[8] = {0};
 struct errno_slot errnos[64] = {0};
+SceUID errnos_mutex = -1;
 
 SceModule2 game_module;
 bool game_module_found = false;
@@ -97,6 +98,20 @@ struct tracked_module tracked_modules[] = {
 	#endif
 };
 
+SceUID transmit_mutex = -1;
+
+void unlock_transmit_mutex(){
+	int k1 = pspSdkSetK1(0);
+	sceKernelSignalSema(transmit_mutex, 1);
+	pspSdkSetK1(k1);
+}
+
+void lock_transmit_mutex(){
+	int k1 = pspSdkSetK1(0);
+	sceKernelWaitSema(transmit_mutex, 1, 0);
+	pspSdkSetK1(k1);
+}
+
 static int psp_select_fd_is_set(uint32_t *field, int sockfd){
 	return field[sockfd >> 5] & (1 << (sockfd & 0x1f));
 }
@@ -110,11 +125,12 @@ static void psp_select_set_fd(uint32_t *field, int sockfd, bool set){
 }
 
 static int extract_result_and_save_errno(uint64_t error_res){
+	int k1 = pspSdkSetK1(0);
 	int32_t *val = (int32_t *)&error_res;
 	int tid = sceKernelGetThreadId();
 	int empty_slot = -1;
 	int oldest_slot = -1;
-	int interrupts = pspSdkDisableInterrupts();
+	sceKernelWaitSema(errnos_mutex, 1, 0);
 	for(int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
 		if (empty_slot == -1 && errnos[i].tid){
 			empty_slot = i;
@@ -125,7 +141,8 @@ static int extract_result_and_save_errno(uint64_t error_res){
 		if (errnos[i].tid == tid){
 			errnos[i].errno = val[0];
 			errnos[i].last_update = sceKernelGetSystemTimeWide();
-			pspSdkEnableInterrupts(interrupts);
+			sceKernelSignalSema(errnos_mutex, 1);
+			pspSdkSetK1(k1);
 			return val[1];
 		}
 	}
@@ -134,14 +151,16 @@ static int extract_result_and_save_errno(uint64_t error_res){
 		errnos[empty_slot].tid = tid;
 		errnos[empty_slot].errno = val[0];
 		errnos[empty_slot].last_update = sceKernelGetSystemTimeWide();
-		pspSdkEnableInterrupts(interrupts);
+		sceKernelSignalSema(errnos_mutex, 1);
+		pspSdkSetK1(k1);
 		return val[1];
 	}
 
 	errnos[oldest_slot].tid = tid;
 	errnos[oldest_slot].errno = val[0];
 	errnos[oldest_slot].last_update = sceKernelGetSystemTimeWide();
-	pspSdkEnableInterrupts(interrupts);
+	sceKernelSignalSema(errnos_mutex, 1);
+	pspSdkSetK1(k1);
 	return val[1];
 }
 
@@ -149,6 +168,7 @@ int sceNetInetSocketPatched(int domain, int type, int protocol){
 	//LOG("%s: begin\n", __func__);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET, 1, (int64_t)domain, (int64_t)type, (int64_t)protocol);
 
+	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
 	if (result >= 0){
 		psp_select_set_fd(nbio_field, result, false);
@@ -159,12 +179,16 @@ int sceNetInetSocketPatched(int domain, int type, int protocol){
 int sceNetInetBindPatched(int sockfd, void *sockaddr, int addrlen){
 	sceKernelDcacheWritebackInvalidateRange(sockaddr, addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_BIND, 1, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetListenPatched(int sockfd, int backlog){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_LISTEN, 1, (int64_t)sockfd, (int64_t)backlog);
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetAcceptPatched(int sockfd, void *sockaddr, void *addrlen){
@@ -187,7 +211,9 @@ int sceNetInetAcceptPatched(int sockfd, void *sockaddr, void *addrlen){
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetConnectPatched(int sockfd, void *sockaddr, int addrlen){
@@ -195,12 +221,16 @@ int sceNetInetConnectPatched(int sockfd, void *sockaddr, int addrlen){
 
 	sceKernelDcacheWritebackInvalidateRange(sockaddr, addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CONNECT, nbio, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetSetsockoptPatched(int sockfd, int level, int optname, void *optval, int optlen){
 	sceKernelDcacheWritebackInvalidateRange(optval, optlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SETSOCKOPT, 1, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (int64_t)optlen);
+
+	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
 
 	if (result >= 0 && level == 0xffff && optname == 0x1009){
@@ -214,7 +244,6 @@ int sceNetInetSetsockoptPatched(int sockfd, int level, int optname, void *optval
 		}
 		psp_select_set_fd(nbio_field, sockfd, optval_content);
 	}
-
 	return result;
 }
 
@@ -227,7 +256,9 @@ int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
@@ -242,7 +273,9 @@ int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
@@ -257,7 +290,9 @@ int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetSendPatched(int sockfd, void *buf, int size, int flags){
@@ -268,7 +303,10 @@ int sceNetInetSendPatched(int sockfd, void *buf, int size, int flags){
 
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SEND, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
-	return extract_result_and_save_errno(res);
+
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetSendtoPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, int addrlen){
@@ -280,7 +318,10 @@ int sceNetInetSendtoPatched(int sockfd, void *buf, int size, int flags, void *de
 	sceKernelDcacheWritebackInvalidateRange(buf, size);
 	sceKernelDcacheWritebackInvalidateRange(dest_addr, addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDTO, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (int64_t)addrlen);
-	return extract_result_and_save_errno(res);
+
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 // these structs are from vitasdk https://github.com/vitasdk/vita-headers/blob/master/include/psp2common/net.h
@@ -315,7 +356,10 @@ int sceNetInetSendmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 		}
 	}
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDMSG, nbio, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
-	return extract_result_and_save_errno(res);
+
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
@@ -330,7 +374,9 @@ int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *dest_addr, void *addrlen){
@@ -352,7 +398,9 @@ int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
@@ -383,12 +431,16 @@ int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetClosePatched(int sockfd){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE, 1, (int64_t)sockfd);
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 struct psp_poll_fd{
@@ -404,7 +456,9 @@ int sceNetInetPollPatched(struct psp_poll_fd *fds, unsigned int nfds, int timeou
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 struct psp_select_timeval{
@@ -435,30 +489,38 @@ int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *excep
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetCloseWithRSTPatched(int sockfd){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CLOSE_WITH_RST, 1, (int64_t)sockfd);
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetSocketAbortPatched(int sockfd){
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_ABORT, 1, (int64_t)sockfd);
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 int sceNetInetGetErrnoPatched(){
+	int k1 = pspSdkSetK1(0);
 	int tid = sceKernelGetThreadId();
-	int interrupts = pspSdkDisableInterrupts();
+	sceKernelWaitSema(errnos_mutex, 1, 0);
 	for (int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
 		if (errnos[i].tid == tid){
 			int _errno = errnos[i].errno;
-			pspSdkEnableInterrupts(interrupts);
+			sceKernelSignalSema(errnos_mutex, 1);
 			return _errno;
 		}
 	}
-	pspSdkEnableInterrupts(interrupts);
+	sceKernelSignalSema(errnos_mutex, 1);
+	pspSdkSetK1(k1);
 	LOG("%s: warning, errno not found for thread %d\n", __func__, tid);
 	return 0;
 }
@@ -478,7 +540,9 @@ uint32_t sceNetInet_lib_AEE60F84_patched(int sockfd, uint32_t command, void *dat
 
 	CACHE_BARRIER();
 
-	return extract_result_and_save_errno(res);
+	unlock_transmit_mutex();
+	int result = extract_result_and_save_errno(res);
+	return result;
 }
 
 static void track_module(SceModule2 *mod){
@@ -763,6 +827,14 @@ static void hookKernelStartModule(){
 	HIJACK_FUNCTION(func, sceKernelStartModulePatched, sceKernelStartModuleOrig, 0);
 }
 
+static int test_lock_thread_func(SceSize args, void *argp){
+	int lock_test_status = sceKernelWaitSema(transmit_mutex, 1, 0);
+	int unlock_test_status = sceKernelSignalSema(transmit_mutex, 1);
+	LOG("%s: lock test 0x%x unlock test 0x%x\n", __func__, lock_test_status, unlock_test_status);
+
+	return 0;
+}
+
 int apply_patch(SceModule2 *mod){
 	if (mod->text_addr > 0x08800000 && mod->text_addr < 0x08900000 && strcmp("opnssmp", mod->modname) != 0){
 		LOG("%s: guessing this is the game, %s, saving module info for later\n", __func__, mod->modname);
@@ -803,6 +875,7 @@ int apply_patch(SceModule2 *mod){
 	return 0;
 }
 
+int (*sceKernelCreateLwMutex_user)(SceLwMutexWorkarea *workarea, const char *name, SceUInt32 attr, int initialCount, u32 *optionsPtr) = NULL;
 int module_start(SceSize args, void * argp){
 	INIT_LOG();
 
@@ -813,6 +886,17 @@ int module_start(SceSize args, void * argp){
 	}
 
 	last_handler = sctrlHENSetStartModuleHandler(apply_patch);
+
+	errnos_mutex = sceKernelCreateSema("inet_redirect request errnos mutex", PSP_LW_MUTEX_ATTR_THFIFO, 1, 1, NULL);
+	transmit_mutex = sceKernelCreateSema("inet_redirect request transmit mutex", PSP_LW_MUTEX_ATTR_THFIFO, 1, 1, NULL);
+	request_slots_mutex = sceKernelCreateSema("inet_redirect request slot mutex", PSP_LW_MUTEX_ATTR_THFIFO, 1, 1, NULL);
+
+	LOG("%s: errnos mutex 0x%x\n", __func__, errnos_mutex);
+	LOG("%s: transmit mutex 0x%x\n", __func__, transmit_mutex);
+	LOG("%s: request slots mutex 0x%x\n", __func__, request_slots_mutex);
+
+	int thid = sceKernelCreateThread("lock test thread", test_lock_thread_func, 123, 0x1000, 0, NULL);
+	sceKernelStartThread(thid, 0, NULL);
 
 	return 0;
 }

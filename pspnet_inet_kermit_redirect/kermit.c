@@ -20,27 +20,32 @@ int sceKermitSendRequest661(SceKermitRequest *request, uint32_t mode, uint32_t c
 
 // get around the message pipe architecture, at least going by https://github.com/DaveeFTW/vita_kermit/blob/90334991fcf2b93c42cdf767d60b825ccee9d1b1/kermit.c#L48-L165
 struct request_slot request_slots[16];
+SceUID request_slots_mutex = -1;
 
 static struct request_slot *reserve_request_slot(){
+	int k1 = pspSdkSetK1(0);
 	while(true){
-		int interrupts = pspSdkDisableInterrupts();
+		sceKernelWaitSema(request_slots_mutex, 1, 0);
 		for(int i = 0;i < sizeof(request_slots) / sizeof(request_slots[0]);i++){
 			if (!request_slots[i].in_use){
 				request_slots[i].in_use = true;
 				request_slots[i].done = false;
-				pspSdkEnableInterrupts(interrupts);
+				sceKernelSignalSema(request_slots_mutex, 1);
+				pspSdkSetK1(k1);
 				return &request_slots[i];
 			}
 		}
-		pspSdkEnableInterrupts(interrupts);
+		sceKernelSignalSema(request_slots_mutex, 1);
 		sceKernelDelayThread(10000);
 	}
 }
 
 static void free_request_slot(struct request_slot *slot){
-	int interrupts = pspSdkDisableInterrupts();
+	int k1 = pspSdkSetK1(0);
+	sceKernelWaitSema(request_slots_mutex, 1, 0);
 	slot->in_use = false;
-	pspSdkEnableInterrupts(interrupts);
+	sceKernelSignalSema(request_slots_mutex, 1);
+	pspSdkSetK1(k1);
 }
 
 uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbio, ...){
@@ -86,8 +91,10 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 
 	CACHE_BARRIER();
 
+	lock_transmit_mutex();
 	uint64_t response = 0;
 	sceKermitSendRequest661(request_uncached, mode, cmd, 14, 0, &response);
+	unlock_transmit_mutex();
 
 	asm volatile ("" : : : "memory");
 
@@ -113,13 +120,13 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 
 	sceKernelChangeThreadPriority(0, orig_priority);
 
-	pspSdkSetK1(k1);
+	lock_transmit_mutex();
 
 	CACHE_BARRIER();
 
 	uint64_t ret = slot->ret;
-	asm volatile ("" : : : "memory");
-
 	free_request_slot(slot);
+	pspSdkSetK1(k1);
+
 	return ret;
 }
