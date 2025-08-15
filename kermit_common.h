@@ -14,7 +14,6 @@ typedef struct {
 struct request_slot{
 	uint32_t mode;
 	uint32_t cmd;
-	int32_t in_use;
 	int32_t done;
 	uint64_t args[14];
 	uint64_t ret;

@@ -21,19 +21,19 @@ int sceKermitSendRequest661(SceKermitRequest *request, uint32_t mode, uint32_t c
 
 // get around the message pipe architecture, at least going by https://github.com/DaveeFTW/vita_kermit/blob/90334991fcf2b93c42cdf767d60b825ccee9d1b1/kermit.c#L48-L165
 struct request_slot request_slots[16];
+bool request_slot_in_use[sizeof(request_slots) / sizeof(request_slots[0])] = {0};
 SceUID request_slots_mutex = -1;
 
-static struct request_slot *reserve_request_slot(){
+static int reserve_request_slot(){
 	int k1 = pspSdkSetK1(0);
 	while(true){
 		sceKernelWaitSema(request_slots_mutex, 1, 0);
 		for(int i = 0;i < sizeof(request_slots) / sizeof(request_slots[0]);i++){
-			if (!request_slots[i].in_use){
-				request_slots[i].in_use = true;
-				request_slots[i].done = false;
+			if (!request_slot_in_use[i]){
+				request_slot_in_use[i] = true;
 				sceKernelSignalSema(request_slots_mutex, 1);
 				pspSdkSetK1(k1);
-				return &request_slots[i];
+				return i;
 			}
 		}
 		sceKernelSignalSema(request_slots_mutex, 1);
@@ -41,16 +41,18 @@ static struct request_slot *reserve_request_slot(){
 	}
 }
 
-static void free_request_slot(struct request_slot *slot){
+static void free_request_slot(int index){
 	int k1 = pspSdkSetK1(0);
 	sceKernelWaitSema(request_slots_mutex, 1, 0);
-	slot->in_use = false;
+	request_slot_in_use[index] = false;
 	sceKernelSignalSema(request_slots_mutex, 1);
 	pspSdkSetK1(k1);
 }
 
 uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbio, ...){
-	struct request_slot *slot = reserve_request_slot();
+	int free_slot_index = reserve_request_slot();
+	struct request_slot *slot = &request_slots[free_slot_index];
+	slot->done = false;
 	slot->mode = mode;
 	slot->cmd = cmd;
 	slot->psp_thread = sceKernelGetThreadId();
@@ -88,7 +90,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	#endif
 
 	int k1 = pspSdkSetK1(0);
-	do_cache(DCACHE_WRITEBACKINVALIDATE, slot, sizeof(struct request_slot));
+	do_cache(DCACHE_WRITEBACKINVALIDATE, slot, sizeof(slot[0]));
 
 	lock_transmit_mutex();
 	uint64_t response = 0;
@@ -100,7 +102,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 
 	uint32_t cycles = 0;
 	while (!slot->done){
-		do_cache(DCACHE_INVALIDATE, slot, sizeof(struct request_slot));
+		do_cache(DCACHE_INVALIDATE, slot, sizeof(slot[0]));
 
 		sceKernelDelayThread(nbio ? 50 : cycles < 100 ? 5000 : 200000);
 		cycles++;
@@ -111,7 +113,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	lock_transmit_mutex();
 
 	uint64_t ret = slot->ret;
-	free_request_slot(slot);
+	free_request_slot(free_slot_index);
 	pspSdkSetK1(k1);
 
 	return ret;
