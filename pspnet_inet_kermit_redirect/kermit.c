@@ -9,6 +9,7 @@
 #include "kermit.h"
 #include "log.h"
 #include "common.h"
+#include "cache.h"
 
 // references https://github.com/TheOfficialFloW/Adrenaline/blob/7d382b7837d9d211d830017ba7aee982fa49a8c6/cef/systemctrl/adrenaline.c#L55-L68
 
@@ -87,32 +88,19 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	#endif
 
 	int k1 = pspSdkSetK1(0);
-	sceKernelDcacheWritebackInvalidateRange(slot, sizeof(struct request_slot));
-
-	CACHE_BARRIER();
+	do_cache(DCACHE_WRITEBACKINVALIDATE, slot, sizeof(struct request_slot));
 
 	lock_transmit_mutex();
 	uint64_t response = 0;
 	sceKermitSendRequest661(request_uncached, mode, cmd, 14, 0, &response);
 	unlock_transmit_mutex();
 
-	asm volatile ("" : : : "memory");
-
-	sceKernelDcacheWritebackInvalidateRange(&slot->done, sizeof(slot->done));
-	sceKernelDcacheWritebackInvalidateRange(&slot->ret, sizeof(slot->ret));
-	asm volatile ("" : : : "memory");
-
 	int orig_priority = sceKernelGetThreadCurrentPriority();
 	sceKernelChangeThreadPriority(0, 126);
-	asm volatile ("" : : : "memory");
-
-	sceKernelDelayThread(50);
 
 	uint32_t cycles = 0;
 	while (!slot->done){
-		sceKernelDcacheWritebackInvalidateRange(&slot->done, sizeof(slot->done));
-		sceKernelDcacheWritebackInvalidateRange(&slot->ret, sizeof(slot->ret));
-		asm volatile ("" : : : "memory");
+		do_cache(DCACHE_INVALIDATE, slot, sizeof(struct request_slot));
 
 		sceKernelDelayThread(nbio ? 50 : cycles < 100 ? 5000 : 200000);
 		cycles++;
@@ -121,8 +109,6 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	sceKernelChangeThreadPriority(0, orig_priority);
 
 	lock_transmit_mutex();
-
-	CACHE_BARRIER();
 
 	uint64_t ret = slot->ret;
 	free_request_slot(slot);

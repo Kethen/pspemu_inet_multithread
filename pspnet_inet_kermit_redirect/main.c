@@ -12,6 +12,7 @@
 #include "hooking.h"
 #include "kermit.h"
 #include "common.h"
+#include "cache.h"
 
 PSP_MODULE_INFO("pspnet_inet_kermit_redirect", PSP_MODULE_KERNEL, 1, 0);
 
@@ -177,6 +178,8 @@ int sceNetInetSocketPatched(int domain, int type, int protocol){
 }
 
 int sceNetInetBindPatched(int sockfd, void *sockaddr, int addrlen){
+	// commit the buffer to memory
+	do_cache(DCACHE_WRITEBACK, sockaddr, addrlen);
 	sceKernelDcacheWritebackInvalidateRange(sockaddr, addrlen);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_BIND, 1, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
 	unlock_transmit_mutex();
@@ -192,24 +195,15 @@ int sceNetInetListenPatched(int sockfd, int backlog){
 }
 
 int sceNetInetAcceptPatched(int sockfd, void *sockaddr, void *addrlen){
+	// commit the buffers to memory, and invalidate it for later read
+	if (sockaddr != NULL && addrlen != NULL)
+		do_cache(DCACHE_WRITEBACKINVALIDATE, sockaddr, *(uint32_t*)addrlen);
 	if (addrlen != NULL)
-		sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
-	if (sockaddr != NULL)
-		sceKernelDcacheWritebackInvalidateRange(sockaddr, *(int32_t*)addrlen);
+		do_cache(DCACHE_WRITEBACKINVALIDATE, addrlen, sizeof(int32_t));
 
 	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
 
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_ACCEPT, nbio, (int64_t)sockfd, (uint64_t)sockaddr, (uint64_t)addrlen);
-
-	if (addrlen != NULL)
-		sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
-
-	CACHE_BARRIER();
-
-	if (sockaddr != NULL)
-		sceKernelDcacheWritebackInvalidateRange(sockaddr, *(int32_t*)addrlen);
-
-	CACHE_BARRIER();
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -219,7 +213,9 @@ int sceNetInetAcceptPatched(int sockfd, void *sockaddr, void *addrlen){
 int sceNetInetConnectPatched(int sockfd, void *sockaddr, int addrlen){
 	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
 
-	sceKernelDcacheWritebackInvalidateRange(sockaddr, addrlen);
+	// commit the buffer to memory
+	do_cache(DCACHE_WRITEBACK, sockaddr, addrlen);
+
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_CONNECT, nbio, (int64_t)sockfd, (uint64_t)sockaddr, (int64_t)addrlen);
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -227,34 +223,27 @@ int sceNetInetConnectPatched(int sockfd, void *sockaddr, int addrlen){
 }
 
 int sceNetInetSetsockoptPatched(int sockfd, int level, int optname, void *optval, int optlen){
-	sceKernelDcacheWritebackInvalidateRange(optval, optlen);
+	// commit the buffer to memory
+	do_cache(DCACHE_WRITEBACK, optval, optlen);
+
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SETSOCKOPT, 1, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (int64_t)optlen);
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
 
 	if (result >= 0 && level == 0xffff && optname == 0x1009){
-		int optval_content = 0;
-		if (optlen == 8){
-			optval_content = *(uint8_t*)optval;
-		}else if (optlen == 16){
-			optval_content = *(uint16_t*)optval;
-		}else{
-			optval_content = *(uint32_t*)optval;
-		}
+		int optval_content = *(int32_t*)optval;
 		psp_select_set_fd(nbio_field, sockfd, optval_content);
 	}
 	return result;
 }
 
 int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval, void *optlen){
-	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
-	sceKernelDcacheWritebackInvalidateRange(optval, *(int32_t*)optlen);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKOPT, 1, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (uint64_t)optlen);
-	sceKernelDcacheWritebackInvalidateRange(optlen, sizeof(int32_t));
-	sceKernelDcacheWritebackInvalidateRange(optval, *(int32_t*)optlen);
+	// commit the buffers to memory, and invalidate for later read
+	do_cache(DCACHE_WRITEBACKINVALIDATE, optval, *(uint32_t*)optlen);
+	do_cache(DCACHE_WRITEBACKINVALIDATE, optlen, sizeof(uint32_t));
 
-	CACHE_BARRIER();
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKOPT, 1, (int64_t)sockfd, (int64_t)level, (int64_t)optname, (uint64_t)optval, (uint64_t)optlen);
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -262,16 +251,11 @@ int sceNetInetGetsockoptPatched(int sockfd, int level, int optname, void *optval
 }
 
 int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
-	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
-	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
+	// commit the buffers to memory, and invalidate for later read
+	do_cache(DCACHE_WRITEBACKINVALIDATE, addr, *(uint32_t*)addrlen);
+	do_cache(DCACHE_WRITEBACKINVALIDATE, addrlen, sizeof(uint32_t));
+
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETSOCKNAME, 1, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
-	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
-
-	CACHE_BARRIER();
-
-	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
-
-	CACHE_BARRIER();
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -279,16 +263,11 @@ int sceNetInetGetsocknamePatched(int sockfd, void *addr, void *addrlen){
 }
 
 int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
-	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
-	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
+	// commit the buffers to memory, and invalidate for later read
+	do_cache(DCACHE_WRITEBACKINVALIDATE, addr, *(uint32_t*)addrlen);
+	do_cache(DCACHE_WRITEBACKINVALIDATE, addrlen, sizeof(uint32_t));
+
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_GETPEERNAME, 1, (int64_t)sockfd, (uint64_t)addr, (uint64_t)addrlen);
-	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
-
-	CACHE_BARRIER();
-
-	sceKernelDcacheWritebackInvalidateRange(addr, *(int32_t*)addrlen);
-
-	CACHE_BARRIER();
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -301,7 +280,9 @@ int sceNetInetSendPatched(int sockfd, void *buf, int size, int flags){
 		nbio = 1;
 	}
 
-	sceKernelDcacheWritebackInvalidateRange(buf, size);
+	// commit the buffer to memory
+	do_cache(DCACHE_WRITEBACK, buf, size);
+
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SEND, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
 
 	unlock_transmit_mutex();
@@ -315,8 +296,10 @@ int sceNetInetSendtoPatched(int sockfd, void *buf, int size, int flags, void *de
 		nbio = 1;
 	}
 
-	sceKernelDcacheWritebackInvalidateRange(buf, size);
-	sceKernelDcacheWritebackInvalidateRange(dest_addr, addrlen);
+	// commit the buffers to memory
+	do_cache(DCACHE_WRITEBACK, buf, size);
+	do_cache(DCACHE_WRITEBACK, dest_addr, addrlen);
+
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDTO, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (int64_t)addrlen);
 
 	unlock_transmit_mutex();
@@ -346,15 +329,17 @@ int sceNetInetSendmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 		nbio = 1;
 	}
 
-	sceKernelDcacheWritebackInvalidateRange(msg, sizeof(SceNetMsghdr));
+	// commit the buffers to memory
 	if (msg->msg_name != NULL && msg->msg_namelen != 0){
-		sceKernelDcacheWritebackInvalidateRange(msg->msg_name, msg->msg_namelen);
+		do_cache(DCACHE_WRITEBACK, msg->msg_name, msg->msg_namelen);
 	}
 	if (msg->msg_iovlen != 0 && msg->msg_iov != NULL){
 		for(int i = 0;i < msg->msg_iovlen;i++){
-			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
+			do_cache(DCACHE_WRITEBACK, msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
 		}
 	}
+	do_cache(DCACHE_WRITEBACK, msg, sizeof(SceNetMsghdr));
+
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SENDMSG, nbio, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
 
 	unlock_transmit_mutex();
@@ -368,11 +353,10 @@ int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
 		nbio = 1;
 	}
 
-	sceKernelDcacheWritebackInvalidateRange(buf, size);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECV, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
-	sceKernelDcacheWritebackInvalidateRange(buf, size);
+	// commit the buffer to memory, and invalidate it for reading later
+	do_cache(DCACHE_WRITEBACKINVALIDATE, buf, size);
 
-	CACHE_BARRIER();
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECV, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags);
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -385,18 +369,12 @@ int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *
 		nbio = 1;
 	}
 
-	sceKernelDcacheWritebackInvalidateRange(buf, size);
-	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
-	sceKernelDcacheWritebackInvalidateRange(dest_addr, *(int32_t*)addrlen);
+	// commit the buffers to memory, and invalidate for reading later
+	do_cache(DCACHE_WRITEBACKINVALIDATE, buf, size);
+	do_cache(DCACHE_WRITEBACKINVALIDATE, dest_addr, *(uint32_t*)addrlen);
+	do_cache(DCACHE_WRITEBACKINVALIDATE, addrlen, sizeof(uint32_t));
+
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVFROM, nbio, (int64_t)sockfd, (uint64_t)buf, (int64_t)size, (int64_t)flags, (uint64_t)dest_addr, (uint64_t)addrlen);
-	sceKernelDcacheWritebackInvalidateRange(buf, size);
-	sceKernelDcacheWritebackInvalidateRange(addrlen, sizeof(int32_t));
-
-	CACHE_BARRIER();
-
-	sceKernelDcacheWritebackInvalidateRange(dest_addr, *(int32_t*)addrlen);
-
-	CACHE_BARRIER();
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -409,27 +387,18 @@ int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 		nbio = 1;
 	}
 
-	sceKernelDcacheWritebackInvalidateRange(msg, sizeof(SceNetMsghdr));
+	// commit the buffers to memory, and invalidate for reading later
 	if (msg->msg_name != NULL && msg->msg_namelen != 0){
-		sceKernelDcacheWritebackInvalidateRange(msg->msg_name, msg->msg_namelen);
+		do_cache(DCACHE_WRITEBACKINVALIDATE, msg->msg_name, msg->msg_namelen);
 	}
 	if (msg->msg_iovlen != 0 && msg->msg_iov != NULL){
 		for(int i = 0;i < msg->msg_iovlen;i++){
-			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
+			do_cache(DCACHE_WRITEBACKINVALIDATE, msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
 		}
 	}
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVMSG, nbio, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
-	sceKernelDcacheWritebackInvalidateRange(msg, sizeof(SceNetMsghdr));
-	if (msg->msg_name != NULL && msg->msg_namelen != 0){
-		sceKernelDcacheWritebackInvalidateRange(msg->msg_name, msg->msg_namelen);
-	}
-	if (msg->msg_iovlen != 0 && msg->msg_iov != NULL){
-		for(int i = 0;i < msg->msg_iovlen;i++){
-			sceKernelDcacheWritebackInvalidateRange(msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
-		}
-	}
+	do_cache(DCACHE_WRITEBACKINVALIDATE, msg, sizeof(SceNetMsghdr));
 
-	CACHE_BARRIER();
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_RECVMSG, nbio, (int64_t)sockfd, (uint64_t)msg, (int64_t)flags);
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -452,9 +421,9 @@ struct psp_poll_fd{
 int sceNetInetPollPatched(struct psp_poll_fd *fds, unsigned int nfds, int timeout){
 	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
 	uint64_t res = kermit_send_wlan_request(KERMIT_INET_POLL, timeout == 0 ? 1 : 0, (uint64_t)fds, (uint64_t)nfds, (int64_t)timeout);
-	sceKernelDcacheWritebackInvalidateRange(fds, sizeof(struct psp_poll_fd) * nfds);
 
-	CACHE_BARRIER();
+	// commit the buffer to memory, and invalidate for later read
+	do_cache(DCACHE_WRITEBACKINVALIDATE, fds, sizeof(struct psp_poll_fd) * nfds);
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -467,27 +436,22 @@ struct psp_select_timeval{
 };
 
 int sceNetInetSelectPatched(int nfds, void *readfds, void *writefds, void *exceptfds, struct psp_select_timeval *timeout){
+	// commit the buffers to memory, and invalidate for later read
 	if (readfds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(readfds, sizeof(uint32_t) * 8);
+		do_cache(DCACHE_WRITEBACKINVALIDATE, readfds, sizeof(uint32_t) * 8);
 	if (writefds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(writefds, sizeof(uint32_t) * 8);
+		do_cache(DCACHE_WRITEBACKINVALIDATE, writefds, sizeof(uint32_t) * 8);
 	if (exceptfds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(exceptfds, sizeof(uint32_t) * 8);
+		do_cache(DCACHE_WRITEBACKINVALIDATE, exceptfds, sizeof(uint32_t) * 8);
 	if (timeout != NULL)
-		sceKernelDcacheWritebackInvalidateRange(timeout, sizeof(struct psp_select_timeval));
+		do_cache(DCACHE_WRITEBACKINVALIDATE, timeout, sizeof(struct psp_select_timeval));
+
 	int nbio = 0;
 	if (timeout != NULL && timeout->tv_sec == 0 && timeout->tv_usec == 0){
 		nbio = 1;
 	}
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SELECT, nbio, (int64_t)nfds, (uint64_t)readfds, (uint64_t)writefds, (uint64_t)exceptfds, (uint64_t)timeout);
-	if (readfds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(readfds, sizeof(uint32_t) * 8);
-	if (writefds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(writefds, sizeof(uint32_t) * 8);
-	if (exceptfds != NULL)
-		sceKernelDcacheWritebackInvalidateRange(exceptfds, sizeof(uint32_t) * 8);
 
-	CACHE_BARRIER();
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SELECT, nbio, (int64_t)nfds, (uint64_t)readfds, (uint64_t)writefds, (uint64_t)exceptfds, (uint64_t)timeout);
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);
@@ -532,13 +496,11 @@ uint32_t sceNetInetGetPspErrorPatched(){
 
 // probably some kind of internal ioctl
 uint32_t sceNetInet_lib_AEE60F84_patched(int sockfd, uint32_t command, void *data){
+	// commit the buffer to memory, and invalidate for later read
 	if (data != NULL)
-		sceKernelDcacheWritebackInvalidateRange(data, 0x24);
-	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_IOCTL, 1, (int64_t)sockfd, (uint64_t)command, (uint64_t)data);
-	if (data != NULL)
-		sceKernelDcacheWritebackInvalidateRange(data, 0x24);
+		do_cache(DCACHE_WRITEBACKINVALIDATE, data, 0x24);
 
-	CACHE_BARRIER();
+	uint64_t res = kermit_send_wlan_request(KERMIT_INET_SOCKET_IOCTL, 1, (int64_t)sockfd, (uint64_t)command, (uint64_t)data);
 
 	unlock_transmit_mutex();
 	int result = extract_result_and_save_errno(res);

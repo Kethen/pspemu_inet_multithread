@@ -7,9 +7,4 @@
 void unlock_transmit_mutex();
 void lock_transmit_mutex();
 
-#define CACHE_BARRIER() \
-	asm volatile ("" : : : "memory"); \
-	sceKernelDelayThread(50); \
-	asm volatile ("" : : : "memory");
-
 #endif

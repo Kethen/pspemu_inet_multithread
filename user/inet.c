@@ -526,6 +526,7 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			response[1] = sceNetRecvmsg(sockfd, &msg, flags);
 			if (response[1] >= 0){
 				if (psp_msg->msg_name != NULL && psp_msg->msg_namelen != 0){
+					SceNetSockaddrIn *addr = (SceNetSockaddrIn *)msg.msg_name;
 					kermit_pspemu_writeback_cache(msg.msg_name, msg.msg_namelen);
 				}
 				if (msg.msg_iov != NULL && msg.msg_iovlen != 0){

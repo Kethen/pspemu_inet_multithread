@@ -582,7 +582,7 @@ void test_udp(){
 		return;
 	}
 	if (from_addr.sin_port != htons(27016)){
-		LOG("%s: bad receive port when receiving as message\n", __func__);
+		LOG("%s: bad receive port (%d) when receiving as message\n", __func__, htons(from_addr.sin_port));
 		return;
 	}
 	if (from_addr.sin_addr.s_addr != sceNetInetInetAddr("127.0.0.1")){
