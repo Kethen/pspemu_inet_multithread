@@ -19,16 +19,30 @@ int sceKermitSendRequest661(SceKermitRequest *request, uint32_t mode, uint32_t c
 
 #define LOG_REQUESTS 0
 
+#define NUM_REQUEST_SLOTS 16
+
+struct gapped_request_slot {
+	uint8_t cache_gap[0x40];
+	struct request_slot slot;
+};
+
 // get around the message pipe architecture, at least going by https://github.com/DaveeFTW/vita_kermit/blob/90334991fcf2b93c42cdf767d60b825ccee9d1b1/kermit.c#L48-L165
-struct request_slot request_slots[16];
-bool request_slot_in_use[sizeof(request_slots) / sizeof(request_slots[0])] = {0};
+struct {
+	struct gapped_request_slot request_slots[NUM_REQUEST_SLOTS];
+	uint8_t cache_gap[0x40];
+	bool request_slot_in_use[NUM_REQUEST_SLOTS];
+} _request_slots = {0};
+
+struct gapped_request_slot *const request_slots = _request_slots.request_slots;
+bool *const request_slot_in_use = _request_slots.request_slot_in_use;
+
 SceUID request_slots_mutex = -1;
 
 static int reserve_request_slot(){
 	int k1 = pspSdkSetK1(0);
 	while(true){
 		sceKernelWaitSema(request_slots_mutex, 1, 0);
-		for(int i = 0;i < sizeof(request_slots) / sizeof(request_slots[0]);i++){
+		for(int i = 0;i < NUM_REQUEST_SLOTS;i++){
 			if (!request_slot_in_use[i]){
 				request_slot_in_use[i] = true;
 				sceKernelSignalSema(request_slots_mutex, 1);
@@ -51,7 +65,7 @@ static void free_request_slot(int index){
 
 uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbio, ...){
 	int free_slot_index = reserve_request_slot();
-	struct request_slot *slot = &request_slots[free_slot_index];
+	struct request_slot *slot = &request_slots[free_slot_index].slot;
 	slot->done = false;
 	slot->mode = mode;
 	slot->cmd = cmd;
