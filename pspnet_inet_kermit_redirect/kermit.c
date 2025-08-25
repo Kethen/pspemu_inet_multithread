@@ -112,7 +112,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	unlock_transmit_mutex();
 
 	int orig_priority = sceKernelGetThreadCurrentPriority();
-	sceKernelChangeThreadPriority(0, 126);
+	sceKernelChangeThreadPriority(0, nbio ? 16 : 111);
 
 	uint32_t cycles = 0;
 	while (!slot->done){

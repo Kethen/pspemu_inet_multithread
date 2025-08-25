@@ -27,6 +27,7 @@ struct errno_slot{
 };
 
 uint32_t nbio_field[8] = {0};
+uint32_t udp_field[8] = {0};
 struct errno_slot errnos[64] = {0};
 SceUID errnos_mutex = -1;
 
@@ -181,6 +182,11 @@ int sceNetInetSocketPatched(int domain, int type, int protocol){
 	int result = extract_result_and_save_errno(res);
 	if (result >= 0){
 		psp_select_set_fd(nbio_field, result, false);
+		if (type == 2 || type == 6){
+			psp_select_set_fd(udp_field, result, true);
+		}else{
+			psp_select_set_fd(udp_field, result, false);
+		}
 	}
 	return result;
 }
@@ -282,10 +288,34 @@ int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
 	return result;
 }
 
+// TEST: limit the amount of nbio udp packet processing, nbio calls are often part of frame budget
+// 60 frames per second, limit number of udp processing per frame to 1/10 of frametime
+// assuming 100 usec is needed per api call
+const static uint32_t udp_window_usec = 1000000 / 60;
+const static uint32_t udp_packet_per_window = udp_window_usec / 10 / 100;
+const static uint64_t would_block_res = 0xBFFFFFFFF; // (EAGAIN << 32) | -1
+
+static uint32_t get_udp_window_num_packets(){
+	static uint64_t last_window_num = 0;
+	static uint32_t packet_count = 0;
+	uint32_t window_num = sceKernelGetSystemTimeLow() / udp_window_usec;
+	if (window_num != last_window_num){
+		// reset counter
+		packet_count = 0;
+		last_window_num = window_num;
+	}
+	packet_count++;
+	return packet_count - 1;
+}
+
 int sceNetInetSendPatched(int sockfd, void *buf, int size, int flags){
 	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
 	if (flags & 0x80){
 		nbio = 1;
+	}
+	int is_udp = psp_select_fd_is_set(udp_field, sockfd);
+	if (is_udp && nbio && get_udp_window_num_packets() > udp_packet_per_window){
+		return extract_result_and_save_errno(would_block_res);
 	}
 
 	// commit the buffer to memory
@@ -302,6 +332,10 @@ int sceNetInetSendtoPatched(int sockfd, void *buf, int size, int flags, void *de
 	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
 	if (flags & 0x80){
 		nbio = 1;
+	}
+	int is_udp = psp_select_fd_is_set(udp_field, sockfd);
+	if (is_udp && nbio && get_udp_window_num_packets() > udp_packet_per_window){
+		return extract_result_and_save_errno(would_block_res);
 	}
 
 	// commit the buffers to memory
@@ -336,6 +370,10 @@ int sceNetInetSendmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 	if (flags & 0x80){
 		nbio = 1;
 	}
+	int is_udp = psp_select_fd_is_set(udp_field, sockfd);
+	if (is_udp && nbio && get_udp_window_num_packets() > udp_packet_per_window){
+		return extract_result_and_save_errno(would_block_res);
+	}
 
 	// commit the buffers to memory
 	if (msg->msg_name != NULL && msg->msg_namelen != 0){
@@ -360,6 +398,10 @@ int sceNetInetRecvPatched(int sockfd, void *buf, int size, int flags){
 	if (flags & 0x80){
 		nbio = 1;
 	}
+	int is_udp = psp_select_fd_is_set(udp_field, sockfd);
+	if (is_udp && nbio && get_udp_window_num_packets() > udp_packet_per_window){
+		return extract_result_and_save_errno(would_block_res);
+	}
 
 	// commit the buffer to memory, and invalidate it for reading later
 	do_cache(DCACHE_WRITEBACKINVALIDATE, buf, size);
@@ -375,6 +417,10 @@ int sceNetInetRecvfromPatched(int sockfd, void *buf, int size, int flags, void *
 	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
 	if (flags & 0x80){
 		nbio = 1;
+	}
+	int is_udp = psp_select_fd_is_set(udp_field, sockfd);
+	if (is_udp && nbio && get_udp_window_num_packets() > udp_packet_per_window){
+		return extract_result_and_save_errno(would_block_res);
 	}
 
 	// commit the buffers to memory, and invalidate for reading later
@@ -393,6 +439,10 @@ int sceNetInetRecvmsgPatched(int sockfd, struct SceNetMsghdr *msg, int flags){
 	int nbio = psp_select_fd_is_set(nbio_field, sockfd);
 	if (flags & 0x80){
 		nbio = 1;
+	}
+	int is_udp = psp_select_fd_is_set(udp_field, sockfd);
+	if (is_udp && nbio && get_udp_window_num_packets() > udp_packet_per_window){
+		return extract_result_and_save_errno(would_block_res);
 	}
 
 	// commit the buffers to memory, and invalidate for reading later
