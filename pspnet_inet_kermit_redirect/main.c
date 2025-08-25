@@ -18,6 +18,8 @@ PSP_MODULE_INFO("pspnet_inet_kermit_redirect", PSP_MODULE_KERNEL, 1, 0);
 
 STMOD_HANDLER last_handler = NULL;
 
+#define USE_TRANSMIT_LOCK 0
+
 struct errno_slot{
 	int tid;
 	int errno;
@@ -99,18 +101,24 @@ struct tracked_module tracked_modules[] = {
 	#endif
 };
 
+#if USE_TRANSMIT_LOCK
 SceUID transmit_mutex = -1;
+#endif
 
 void unlock_transmit_mutex(){
+	#if USE_TRANSMIT_LOCK
 	int k1 = pspSdkSetK1(0);
 	sceKernelSignalSema(transmit_mutex, 1);
 	pspSdkSetK1(k1);
+	#endif
 }
 
 void lock_transmit_mutex(){
+	#if USE_TRANSMIT_LOCK
 	int k1 = pspSdkSetK1(0);
 	sceKernelWaitSema(transmit_mutex, 1, 0);
 	pspSdkSetK1(k1);
+	#endif
 }
 
 static int psp_select_fd_is_set(uint32_t *field, int sockfd){
@@ -789,6 +797,7 @@ static void hookKernelStartModule(){
 	HIJACK_FUNCTION(func, sceKernelStartModulePatched, sceKernelStartModuleOrig, 0);
 }
 
+#if USE_TRANSMIT_LOCK
 static int test_lock_thread_func(SceSize args, void *argp){
 	int lock_test_status = sceKernelWaitSema(transmit_mutex, 1, 0);
 	int unlock_test_status = sceKernelSignalSema(transmit_mutex, 1);
@@ -796,6 +805,7 @@ static int test_lock_thread_func(SceSize args, void *argp){
 
 	return 0;
 }
+#endif
 
 int apply_patch(SceModule2 *mod){
 	if (mod->text_addr > 0x08800000 && mod->text_addr < 0x08900000 && strcmp("opnssmp", mod->modname) != 0){
@@ -850,15 +860,19 @@ int module_start(SceSize args, void * argp){
 	last_handler = sctrlHENSetStartModuleHandler(apply_patch);
 
 	errnos_mutex = sceKernelCreateSema("inet_redirect request errnos mutex", PSP_LW_MUTEX_ATTR_THFIFO, 1, 1, NULL);
+	#if USE_TRANSMIT_LOCK
 	transmit_mutex = sceKernelCreateSema("inet_redirect request transmit mutex", PSP_LW_MUTEX_ATTR_THFIFO, 1, 1, NULL);
+	#endif
 	request_slots_mutex = sceKernelCreateSema("inet_redirect request slot mutex", PSP_LW_MUTEX_ATTR_THFIFO, 1, 1, NULL);
 
 	LOG("%s: errnos mutex 0x%x\n", __func__, errnos_mutex);
+	#if USE_TRANSMIT_LOCK
 	LOG("%s: transmit mutex 0x%x\n", __func__, transmit_mutex);
-	LOG("%s: request slots mutex 0x%x\n", __func__, request_slots_mutex);
-
 	int thid = sceKernelCreateThread("lock test thread", test_lock_thread_func, 123, 0x1000, 0, NULL);
 	sceKernelStartThread(thid, 0, NULL);
+	#endif
+	LOG("%s: request slots mutex 0x%x\n", __func__, request_slots_mutex);
+
 
 	return 0;
 }
