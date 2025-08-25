@@ -668,7 +668,7 @@ static void replace_functions(SceModule2 *mod){
 		rewrite_mod_import(mod, "sceNetInet_lib", 0xAEE60F84, sceNetInet_lib_AEE60F84_patched);
 }
 
-void rehook_inet(){
+int rehook_inet(){
 	//LOG("%s: inet rehook triggered\n", __func__);
 
 	int interrupts = pspSdkDisableInterrupts();
@@ -701,6 +701,7 @@ void rehook_inet(){
 	}
 
 	pspSdkEnableInterrupts(interrupts);
+	return 0;
 }
 
 static int (*sceUtilityLoadModuleOrig)(int modname) = sceUtilityLoadModule;
