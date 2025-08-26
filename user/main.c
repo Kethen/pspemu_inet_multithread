@@ -101,6 +101,12 @@ static SceUID sceKernelCreateThreadPatched(const char *name, SceKernelThreadEntr
                       const SceKernelThreadOptParam *option) {
 	LOG("%s: starting thread %s with entry 0x%x affinity 0x%x\n", __func__, name, entry, cpuAffinityMask);
 
+	if (strcmp(name, "ScePspemuRemoteNet") == 0){
+		const static int new_size = 0x10000;
+		LOG("%s: boosting network worker's stack size to 0x%x\n", __func__, new_size);
+		stackSize = new_size;
+	}
+
 	int result = TAI_CONTINUE(SceUID, sceKernelCreateThreadRef, name, entry, initPriority, stackSize, attr, cpuAffinityMask, option);
 	return result;
 }
@@ -177,9 +183,10 @@ int module_start(SceSize args, void *argp) {
 
 	#if DUMP
 	dump_pspemu(tai_info.modid);
+	#endif
+
 	sceKernelCreateThreadHookId = taiHookFunctionImport(&sceKernelCreateThreadRef, "ScePspemu", 0xCAE9ACE6, 0xC5C11EE7, sceKernelCreateThreadPatched);
 	LOG("%s: sceKernelCreateThread hooked 0x%x\n", __func__, sceKernelCreateThreadHookId);
-	#endif
 
 	get_functions_and_data(tai_info.modid);
 	kermit_wait_and_get_request_hook_id = taiHookFunctionOffset(&kermit_wait_and_get_request_ref, tai_info.modid, 0, 0x64D0, 1, kermit_wait_and_get_request_patched);
