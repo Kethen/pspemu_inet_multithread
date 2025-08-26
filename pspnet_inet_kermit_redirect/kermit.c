@@ -70,6 +70,7 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	slot->mode = mode;
 	slot->cmd = cmd;
 	slot->psp_thread = sceKernelGetThreadId();
+	slot->nbio = nbio;
 
 	#if LOG_REQUESTS
 	char args_log[255];

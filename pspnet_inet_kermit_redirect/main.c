@@ -290,9 +290,9 @@ int sceNetInetGetpeernamePatched(int sockfd, void *addr, void *addrlen){
 
 // TEST: limit the amount of nbio udp packet processing, nbio calls are often part of frame budget
 // 60 frames per second, limit number of udp processing per frame to 1/10 of frametime
-// assuming 100 usec is needed per api call
+// assuming 300 usec is needed per api call
 const static uint32_t udp_window_usec = 1000000 / 60;
-const static uint32_t udp_packet_per_window = udp_window_usec / 10 / 100;
+const static uint32_t udp_packet_per_window = udp_window_usec / 10 / 300;
 const static uint64_t would_block_res = 0xBFFFFFFFF; // (EAGAIN << 32) | -1
 
 static uint32_t get_udp_window_num_packets(){

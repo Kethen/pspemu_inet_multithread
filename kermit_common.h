@@ -19,6 +19,7 @@ struct request_slot{
 	uint64_t ret;
 	char buf[sizeof(SceKermitRequest) + 0x40];
 	int32_t psp_thread;
+	int32_t nbio;
 };
 
 #define KERMIT_MODE_WLAN 10

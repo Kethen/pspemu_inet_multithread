@@ -926,6 +926,25 @@ int handle_inet_request(SceKermitRequest *request){
 
 	struct request_slot *slot = kermit_get_pspemu_addr_from_psp_addr(*(uint32_t*)&request->args[0], KERMIT_ADDR_MODE_INOUT, sizeof(struct request_slot));
 
+	if (slot->nbio &&
+		(
+			request->cmd == KERMIT_INET_RECV ||
+			request->cmd == KERMIT_INET_RECVFROM ||
+			request->cmd == KERMIT_INET_RECVMSG ||
+			request->cmd == KERMIT_INET_SEND ||
+			request->cmd == KERMIT_INET_SENDTO ||
+			request->cmd == KERMIT_INET_SENDMSG ||
+			request->cmd == KERMIT_INET_POLL ||
+			request->cmd == KERMIT_INET_SELECT
+		)
+	){
+		// if the psp side knows it's nbio, we do it right now for selected commands
+		//LOG("%s: processing nbio right now, free stack 0x%x\n", __func__, sceKernelGetThreadStackFreeSize(0));
+		handle_request(slot, NULL);
+		kermit_respond_request(KERMIT_MODE_WLAN, request, 0);
+		return 1;
+	}
+
 	int free_worker = -1;
 	int shortest_queue_worker = -1;
 	for (int i = 0;i < num_workers;i++){
