@@ -55,6 +55,11 @@ struct tracked_module tracked_modules[] = {
 		.name = "sceNetMiniUPnP",
 		.found = false
 	},
+	{
+		.mod = {0},
+		.name = "aemu_postoffice_client",
+		.found = false
+	},
 
 	#if 1
 	{
