@@ -795,12 +795,18 @@ int sceKernelStartModulePatched(SceUID modid, SceSize argsize, void *argp, int *
 }
 
 static void hookKernelStartModule(){
-	u32 func = sctrlHENFindFunction("sceModuleManager", "ModuleMgrForUser", 0x50F0C1EC);
-	if (func == NULL){
-		LOG("%s: sceKernelStartModule not found, not hooking\n", __func__);
+	static int hooked = 0;
+	if (!hooked){
+		u32 func = sctrlHENFindFunction("sceModuleManager", "ModuleMgrForUser", 0x50F0C1EC);
+		if (func == NULL){
+			LOG("%s: sceKernelStartModule not found, not hooking\n", __func__);
+			return;
+		}
+		HIJACK_FUNCTION(func, sceKernelStartModulePatched, sceKernelStartModuleOrig, 0);
+		hooked = 1;
 		return;
 	}
-	HIJACK_FUNCTION(func, sceKernelStartModulePatched, sceKernelStartModuleOrig, 0);
+	LOG("%s: sceKernelStartModule is already hooked\n", __func__);
 }
 
 #if USE_TRANSMIT_LOCK
@@ -815,7 +821,7 @@ static int test_lock_thread_func(SceSize args, void *argp){
 
 int apply_patch(SceModule2 *mod){
 	if (mod->text_addr > 0x08800000 && mod->text_addr < 0x08900000 && strcmp("opnssmp", mod->modname) != 0){
-		LOG("%s: guessing this is the game, %s, saving module info for later\n", __func__, mod->modname);
+		LOG("%s: guessing this is the game, %s 0x%x, saving module info for later\n", __func__, mod->modname, mod->text_addr);
 		game_module = *mod;
 		game_module_found = true;
 
