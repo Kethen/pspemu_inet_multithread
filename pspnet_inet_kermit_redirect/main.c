@@ -104,6 +104,14 @@ struct tracked_module tracked_modules[] = {
 		.found = false
 	},
 	#endif
+
+	#if 1
+	{
+		.mod = {0},
+		.name = "NetShell",
+		.found = false
+	},
+	#endif
 };
 
 #if USE_TRANSMIT_LOCK
