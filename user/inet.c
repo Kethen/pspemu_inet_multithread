@@ -247,6 +247,10 @@ static void handle_request(struct request_slot *request, struct inet_worker *wor
 			int32_t sockfd = get_sockfd(psp_sockfd);
 			SceNetSockaddrIn *addr_out = request->args[1] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[1], KERMIT_ADDR_MODE_OUT, sizeof(SceNetSockaddrIn));
 			int32_t *addrlen_in_out = request->args[2] == 0 ? NULL : kermit_get_pspemu_addr_from_psp_addr(*(uint32_t *)&request->args[2], KERMIT_ADDR_MODE_INOUT, sizeof(int32_t));
+			if (*addrlen_in_out < 0){
+				// oh god, we can only assume a size at this point, but the PSP seems to force write the size when it sees that
+				*addrlen_in_out = sizeof(SceNetSockaddrIn);
+			}
 			int accept_sockfd = sceNetAccept(sockfd, (void *)addr_out, addrlen_in_out);
 			if (accept_sockfd < 0){
 				response[1] = accept_sockfd;
