@@ -28,7 +28,7 @@ struct gapped_request_slot {
 
 // get around the message pipe architecture, at least going by https://github.com/DaveeFTW/vita_kermit/blob/90334991fcf2b93c42cdf767d60b825ccee9d1b1/kermit.c#L48-L165
 struct {
-	struct gapped_request_slot request_slots[NUM_REQUEST_SLOTS];
+	struct gapped_request_slot request_slots[NUM_REQUEST_SLOTS + 1];
 	uint8_t cache_gap[0x40];
 	bool request_slot_in_use[NUM_REQUEST_SLOTS];
 } _request_slots = {0};
@@ -38,7 +38,10 @@ bool *const request_slot_in_use = _request_slots.request_slot_in_use;
 
 SceUID request_slots_mutex = -1;
 
-static int reserve_request_slot(){
+static int reserve_request_slot(int nbio){
+	if (nbio){
+		return NUM_REQUEST_SLOTS;
+	}
 	int k1 = pspSdkSetK1(0);
 	while(true){
 		sceKernelWaitSema(request_slots_mutex, 1, 0);
@@ -56,6 +59,9 @@ static int reserve_request_slot(){
 }
 
 static void free_request_slot(int index){
+	if (index == NUM_REQUEST_SLOTS){
+		return;
+	}
 	int k1 = pspSdkSetK1(0);
 	sceKernelWaitSema(request_slots_mutex, 1, 0);
 	request_slot_in_use[index] = false;
@@ -64,7 +70,7 @@ static void free_request_slot(int index){
 }
 
 uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbio, ...){
-	int free_slot_index = reserve_request_slot();
+	int free_slot_index = reserve_request_slot(nbio);
 	struct request_slot *slot = &request_slots[free_slot_index].slot;
 	slot->done = false;
 	slot->mode = mode;
@@ -112,18 +118,21 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	sceKermitSendRequest661(request_uncached, mode, cmd, 14, 0, &response);
 	unlock_transmit_mutex();
 
-	int orig_priority = sceKernelGetThreadCurrentPriority();
-	sceKernelChangeThreadPriority(0, 111);
+	int orig_priority = 0;
+	if (!nbio){
+		orig_priority = sceKernelGetThreadCurrentPriority();
+		sceKernelChangeThreadPriority(0, 111);
+	}
 
 	uint32_t cycles = 0;
 	while (!slot->done){
 		do_cache(DCACHE_INVALIDATE, slot, sizeof(slot[0]));
 
-		sceKernelDelayThread(nbio ? 50 : cycles < 100 ? 5000 : 200000);
+		if (!nbio) sceKernelDelayThread(cycles < 100 ? 5000 : 200000);
 		cycles++;
 	}
 
-	sceKernelChangeThreadPriority(0, orig_priority);
+	if (!nbio) sceKernelChangeThreadPriority(0, orig_priority);
 
 	lock_transmit_mutex();
 
