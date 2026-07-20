@@ -116,10 +116,13 @@ uint64_t _kermit_send_request(uint32_t mode, uint32_t cmd, int num_args, int nbi
 	sceKernelChangeThreadPriority(0, 111);
 
 	uint32_t cycles = 0;
-	while (!slot->done){
+	while (true){
 		do_cache(DCACHE_INVALIDATE, slot, sizeof(slot[0]));
+		if (slot->done){
+			break;
+		}
 
-		sceKernelDelayThread(nbio ? 50 : cycles < 100 ? 5000 : 200000);
+		if (!nbio) sceKernelDelayThread(cycles < 100 ? 5000 : 200000);
 		cycles++;
 	}
 

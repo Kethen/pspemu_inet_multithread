@@ -19,6 +19,7 @@ PSP_MODULE_INFO("pspnet_inet_kermit_redirect", PSP_MODULE_KERNEL, 1, 0);
 STMOD_HANDLER last_handler = NULL;
 
 #define USE_TRANSMIT_LOCK 0
+#define USE_ERRNOS_LOCK 1
 
 struct errno_slot{
 	int tid;
@@ -28,7 +29,9 @@ struct errno_slot{
 
 uint32_t nbio_field[8] = {0};
 struct errno_slot errnos[64] = {0};
+#if USE_ERRNOS_LOCK
 SceUID errnos_mutex = -1;
+#endif
 
 SceModule2 game_module;
 bool game_module_found = false;
@@ -134,6 +137,22 @@ void lock_transmit_mutex(){
 	#endif
 }
 
+void unlock_errnos_mutex(){
+	#if USE_ERRNOS_LOCK
+	int k1 = pspSdkSetK1(0);
+	sceKernelSignalSema(errnos_mutex, 1);
+	pspSdkSetK1(k1);
+	#endif
+}
+
+void lock_errnos_mutex(){
+	#if USE_ERRNOS_LOCK
+	int k1 = pspSdkSetK1(0);
+	sceKernelWaitSema(errnos_mutex, 1, 0);
+	pspSdkSetK1(k1);
+	#endif
+}
+
 static int psp_select_fd_is_set(uint32_t *field, int sockfd){
 	return field[sockfd >> 5] & (1 << (sockfd & 0x1f));
 }
@@ -147,12 +166,11 @@ static void psp_select_set_fd(uint32_t *field, int sockfd, bool set){
 }
 
 static int extract_result_and_save_errno(uint64_t error_res){
-	int k1 = pspSdkSetK1(0);
 	int32_t *val = (int32_t *)&error_res;
 	int tid = sceKernelGetThreadId();
 	int empty_slot = -1;
 	int oldest_slot = -1;
-	sceKernelWaitSema(errnos_mutex, 1, 0);
+	lock_transmit_mutex();
 	for(int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
 		if (empty_slot == -1 && errnos[i].tid){
 			empty_slot = i;
@@ -163,8 +181,7 @@ static int extract_result_and_save_errno(uint64_t error_res){
 		if (errnos[i].tid == tid){
 			errnos[i].errno = val[0];
 			errnos[i].last_update = sceKernelGetSystemTimeWide();
-			sceKernelSignalSema(errnos_mutex, 1);
-			pspSdkSetK1(k1);
+			unlock_transmit_mutex();
 			return val[1];
 		}
 	}
@@ -173,16 +190,14 @@ static int extract_result_and_save_errno(uint64_t error_res){
 		errnos[empty_slot].tid = tid;
 		errnos[empty_slot].errno = val[0];
 		errnos[empty_slot].last_update = sceKernelGetSystemTimeWide();
-		sceKernelSignalSema(errnos_mutex, 1);
-		pspSdkSetK1(k1);
+		unlock_transmit_mutex();
 		return val[1];
 	}
 
 	errnos[oldest_slot].tid = tid;
 	errnos[oldest_slot].errno = val[0];
 	errnos[oldest_slot].last_update = sceKernelGetSystemTimeWide();
-	sceKernelSignalSema(errnos_mutex, 1);
-	pspSdkSetK1(k1);
+	unlock_transmit_mutex();
 	return val[1];
 }
 
@@ -494,18 +509,16 @@ int sceNetInetSocketAbortPatched(int sockfd){
 }
 
 int sceNetInetGetErrnoPatched(){
-	int k1 = pspSdkSetK1(0);
 	int tid = sceKernelGetThreadId();
-	sceKernelWaitSema(errnos_mutex, 1, 0);
+	lock_transmit_mutex();
 	for (int i = 0;i < sizeof(errnos) / sizeof(struct errno_slot);i++){
 		if (errnos[i].tid == tid){
 			int _errno = errnos[i].errno;
-			sceKernelSignalSema(errnos_mutex, 1);
+			unlock_transmit_mutex();
 			return _errno;
 		}
 	}
-	sceKernelSignalSema(errnos_mutex, 1);
-	pspSdkSetK1(k1);
+	unlock_transmit_mutex();
 	LOG("%s: warning, errno not found for thread %d\n", __func__, tid);
 	return 0;
 }
@@ -879,13 +892,17 @@ int module_start(SceSize args, void * argp){
 
 	last_handler = sctrlHENSetStartModuleHandler(apply_patch);
 
+	#if USE_ERRNOS_LOCK
 	errnos_mutex = sceKernelCreateSema("inet_redirect request errnos mutex", PSP_LW_MUTEX_ATTR_THFIFO, 1, 1, NULL);
+	#endif
 	#if USE_TRANSMIT_LOCK
 	transmit_mutex = sceKernelCreateSema("inet_redirect request transmit mutex", PSP_LW_MUTEX_ATTR_THFIFO, 1, 1, NULL);
 	#endif
 	request_slots_mutex = sceKernelCreateSema("inet_redirect request slot mutex", PSP_LW_MUTEX_ATTR_THFIFO, 1, 1, NULL);
 
+	#if USE_ERRNOS_LOCK
 	LOG("%s: errnos mutex 0x%x\n", __func__, errnos_mutex);
+	#endif
 	#if USE_TRANSMIT_LOCK
 	LOG("%s: transmit mutex 0x%x\n", __func__, transmit_mutex);
 	int thid = sceKernelCreateThread("lock test thread", test_lock_thread_func, 123, 0x1000, 0, NULL);
